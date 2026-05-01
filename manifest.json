@@ -1,0 +1,26 @@
+{
+  "name": "绩效考评系统",
+  "short_name": "绩效考评",
+  "description": "绩效考评系统",
+  "start_url": "/performance_app.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f172a",
+  "theme_color": "#1a56db",
+  "icons": [
+    {
+      "src": "generated-images/App_icon_for_a_warehouse_perfo_2026-04-22T14-55-48.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "generated-images/App_icon_for_a_warehouse_perfo_2026-04-22T14-55-48.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "categories": ["business", "productivity"],
+  "lang": "zh-CN"
+}

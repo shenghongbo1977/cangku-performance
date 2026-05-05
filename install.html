@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>扫码安装绩效考评App</title>
+  <style>
+    body {
+      font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      background: linear-gradient(135deg, #0f172a, #1e3a5f);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      margin: 0;
+      padding: 20px;
+      text-align: center;
+    }
+    h1 { font-size: 22px; margin-bottom: 6px; }
+    .subtitle { font-size: 13px; color: rgba(255,255,255,0.6); margin-bottom: 28px; }
+    .qr-wrap {
+      background: #fff;
+      padding: 16px;
+      border-radius: 16px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+    }
+    .qr-wrap img { display: block; width: 240px; height: 240px; }
+    .url-box {
+      margin-top: 20px;
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 12px;
+      color: rgba(255,255,255,0.7);
+      word-break: break-all;
+      max-width: 320px;
+    }
+    .steps {
+      margin-top: 28px;
+      text-align: left;
+      background: rgba(255,255,255,0.07);
+      border-radius: 14px;
+      padding: 20px 24px;
+      max-width: 340px;
+      width: 100%;
+    }
+    .steps h3 { font-size: 15px; margin-bottom: 14px; color: #fff; }
+    .step { display: flex; gap: 12px; margin-bottom: 12px; font-size: 13px; color: rgba(255,255,255,0.8); align-items: flex-start; }
+    .step-num { background: #1a56db; color: #fff; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+    .warning {
+      margin-top: 20px;
+      font-size: 11px;
+      color: rgba(255,255,255,0.4);
+      max-width: 320px;
+    }
+  </style>
+</head>
+<body>
+  <h1>📦 绩效考评系统</h1>
+  <p class="subtitle">扫码安装到手机桌面</p>
+
+  <div class="qr-wrap">
+    <img src="https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=https%3A%2F%2F184252b5af6b03dc-119-108-190-76.serveousercontent.com%2Fperformance_app.html&format=png&margin=10" alt="QR Code" />
+  </div>
+
+  <div class="url-box">直接访问：184252b5af6b03dc.serveousercontent.com</div>
+
+  <div class="steps">
+    <h3>📋 安装步骤（Android / iOS）</h3>
+    <div class="step"><div class="step-num">1</div><div>用手机浏览器（Chrome/Safari）扫描上方二维码</div></div>
+    <div class="step"><div class="step-num">2</div><div>打开页面后，浏览器会弹出"安装App"提示，或点击底部按钮</div></div>
+    <div class="step"><div class="step-num">3</div><div>iPhone：点分享→添加到主屏幕<br>Android：点右上角⋮→添加到主屏幕</div></div>
+    <div class="step"><div class="step-num">4</div><div>安装完成后，直接从手机桌面图标打开即可使用</div></div>
+  </div>
+
+  <p class="warning">⚠️ 首次打开需要联网，之后可离线使用</p>
+</body>
+</html>

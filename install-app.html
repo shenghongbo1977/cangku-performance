@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>绩效考评系统 - 安装说明</title>
+  <style>
+    body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; margin: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; box-sizing: border-box; }
+    .card { background: #1e293b; border-radius: 20px; padding: 40px; max-width: 480px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,.5); text-align: center; }
+    .icon { font-size: 64px; margin-bottom: 20px; }
+    h1 { font-size: 24px; margin: 0 0 8px; color: #f8fafc; }
+    .sub { color: #94a3b8; margin: 0 0 24px; font-size: 14px; }
+    .cloud-badge { display: inline-block; background: #16a34a; color: white; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; margin-bottom: 20px; }
+    .qr-section { margin: 20px 0; }
+    .qr-section img { width: 200px; height: 200px; border-radius: 16px; border: 4px solid #334155; }
+    .qr-label { margin-top: 10px; font-size: 13px; color: #94a3b8; }
+    .btn-group { display: flex; flex-direction: column; gap: 12px; margin: 20px 0; }
+    .apk-link { display: block; color: white; text-decoration: none; padding: 14px 28px; border-radius: 30px; font-weight: 600; font-size: 15px; transition: opacity .2s; }
+    .apk-link:hover { opacity: 0.85; }
+    .btn-primary { background: #1a56db; }
+    .btn-secondary { background: #374151; font-size: 13px; padding: 10px 20px; }
+    .step-note { background: #0f172a; border-radius: 12px; padding: 16px; margin-top: 16px; text-align: left; font-size: 13px; color: #94a3b8; line-height: 1.8; }
+    .step-note b { color: #f8fafc; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">📱</div>
+    <h1>绩效考评系统</h1>
+    <p class="sub">支持多人数据同步的绩效考评系统</p>
+    <div class="cloud-badge">☁️ 云端数据同步版</div>
+
+    <div class="qr-section">
+      <img src="apk-cloud-qrcode.png" onerror="this.src=''" alt="APK下载二维码">
+      <div class="qr-label">📷 扫码下载 · 任意网络均可使用</div>
+    </div>
+
+    <div class="btn-group">
+      <a class="apk-link btn-primary"
+         href="https://shenghongbo1977.github.io/cangku-performance/app.apk"
+         download="绩效考评系统.apk">
+        📥 点击下载安装包（推荐）
+      </a>
+      <a class="apk-link btn-secondary"
+         href="https://cangku-performance.surge.sh/app.apk"
+         download="绩效考评系统.apk">
+        🔗 备用下载地址（surge.sh）
+      </a>
+    </div>
+
+    <div class="step-note">
+      <b>安装步骤：</b><br>
+      1. 点击上方按钮，等待 APK 下载完成<br>
+      2. 在手机"文件管理"或"下载"中找到该文件<br>
+      3. 点击安装，若提示"未知来源"请点击"仍然安装"<br>
+      4. 安装完成后打开即可登录使用<br>
+      <br>
+      支持 Android 7.0 及以上系统
+    </div>
+  </div>
+</body>
+</html>

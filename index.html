@@ -876,7 +876,16 @@ let currentScores = {};
 let confirmedSet = new Set();
 let realtimeChannel = null;
 let pendingConfirmCallback = null;
-const STORAGE_KEY = 'cangku_perf_rounds_v110';
+let isLocalMode = false;
+
+// Local-first: localStorage keys (同步云端后回写)
+const LS_USERS = 'jx_v110_users';
+const LS_DEPTS = 'jx_v110_departments';
+const LS_DEPT_MEMBERS = 'jx_v110_dept_members';
+const LS_ROUNDS = 'jx_v110_rounds';
+const LS_ROUND_WEIGHTS = 'jx_v110_weights';
+const LS_SCORES = 'jx_v110_scores';
+const LS_CURRENT_USER = 'jx_v110_current_user';
 
 // ===== LOADING & STATUS =====
 function showLoading(show) {
@@ -981,13 +990,48 @@ async function forceRefreshCloud() {
   showToast(allUsers.length > 0 ? '已同步' : '同步失败');
 }
 
-// ===== DATA LOADING =====
-async function loadAllData() {
-  const client = initSupabase();
-  if (!client) return false;
-  setCloudStatus('connecting');
+// ===== DATA LOADING (Local-first + Cloud sync) =====
+function loadFromLocalStorage() {
   try {
-    const [usersRes, deptsRes, deptMRes, roundsRes, configRes, scoresRes] = await Promise.all([
+    var lu = localStorage.getItem(LS_USERS);
+    var ld = localStorage.getItem(LS_DEPTS);
+    var ldm = localStorage.getItem(LS_DEPT_MEMBERS);
+    var lr = localStorage.getItem(LS_ROUNDS);
+    var lw = localStorage.getItem(LS_ROUND_WEIGHTS);
+    var ls = localStorage.getItem(LS_SCORES);
+    allUsers = lu ? JSON.parse(lu) : [];
+    departments = ld ? JSON.parse(ld) : [];
+    deptMembers = ldm ? JSON.parse(ldm) : [];
+    loadRoundsDataFromLocal(lr, lw, ls);
+  } catch(e) { console.warn('LocalStorage load error:', e); }
+}
+
+function saveToLocalStorage() {
+  try {
+    localStorage.setItem(LS_USERS, JSON.stringify(allUsers));
+    localStorage.setItem(LS_DEPTS, JSON.stringify(departments));
+    localStorage.setItem(LS_DEPT_MEMBERS, JSON.stringify(deptMembers));
+    if (roundsData) {
+      localStorage.setItem(LS_ROUNDS, JSON.stringify(roundsData));
+      localStorage.setItem(LS_ROUND_WEIGHTS, JSON.stringify(currentRoundWeights));
+      localStorage.setItem(LS_SCORES, JSON.stringify(currentScores));
+    }
+  } catch(e) { console.warn('LocalStorage save error:', e); }
+}
+
+async function loadAllData() {
+  // Step 1: Load from localStorage first (always works)
+  loadFromLocalStorage();
+  setCloudStatus(isLocalMode ? 'offline' : 'connecting');
+  // Step 2: Try cloud sync
+  const client = initSupabase();
+  if (!client) {
+    isLocalMode = true;
+    setCloudStatus('offline');
+    return false;
+  }
+  try {
+    var [usersRes, deptsRes, deptMRes, roundsRes, configRes, scoresRes] = await Promise.all([
       client.from('users').select('*').eq('is_active', true).order('id'),
       client.from('departments').select('*').eq('is_active', true).order('sort_order'),
       client.from('department_members').select('*'),
@@ -995,25 +1039,41 @@ async function loadAllData() {
       client.from('app_config').select('value').eq('key', 'active_round_id'),
       client.from('scores').select('*')
     ]);
-    allUsers = usersRes.data || [];
-    departments = deptsRes.data || [];
-    deptMembers = deptMRes.data || [];
-    setCloudStatus('online');
+    // Merge cloud data into local
+    if (usersRes.data && usersRes.data.length > 0) allUsers = usersRes.data;
+    if (deptsRes.data && deptsRes.data.length > 0) departments = deptsRes.data;
+    if (deptMRes.data) deptMembers = deptMRes.data;
     await loadRoundsData(roundsRes.data || [], configRes.data || [], scoresRes.data || []);
+    isLocalMode = false;
+    setCloudStatus('online');
+    saveToLocalStorage();
     return true;
-  } catch(e) { console.error('loadAllData error:', e); setCloudStatus('error'); return false; }
+  } catch(e) {
+    console.warn('Cloud sync failed, using local data:', e.message);
+    isLocalMode = true;
+    setCloudStatus('offline');
+    return false;
+  }
 }
 
 async function loadRoundsData(roundsArr, configArr, scoresArr) {
-  const roundsMap = {};
-  roundsArr.forEach(r => {
-    let config = r.config || {};
+  var roundsMap = {};
+  roundsArr.forEach(function(r) {
+    var config = r.config || {};
     if (typeof config === 'string') { try { config = JSON.parse(config); } catch(e) { config = {}; } }
-    roundsMap[r.id] = { id: r.id, name: r.name, createdAt: r.created_at, status: r.status || 'active', config, scores: {} };
+    roundsMap[r.id] = {
+      id: r.id, name: r.name, createdAt: r.created_at, status: r.status || 'active',
+      categories: r.categories || config.categories || null,
+      scope: r.scope || config.scope || 'all',
+      scope_dept_ids: r.scope_dept_ids || config.scope_dept_ids || [],
+      start_date: r.start_date || null, end_date: r.end_date || null,
+      description: r.description || '',
+      config: config, scores: {}
+    };
   });
-  (scoresArr || []).forEach(s => {
+  (scoresArr || []).forEach(function(s) {
     if (!roundsMap[s.round_id]) return;
-    const rid = s.round_id;
+    var rid = s.round_id;
     if (!roundsMap[rid].scores[s.rater_id]) roundsMap[rid].scores[s.rater_id] = {};
     if (s.category_id && s.raw_score !== null) {
       if (!roundsMap[rid].scores[s.rater_id][s.target_id]) roundsMap[rid].scores[s.rater_id][s.target_id] = {};
@@ -1022,8 +1082,43 @@ async function loadRoundsData(roundsArr, configArr, scoresArr) {
       roundsMap[rid].scores[s.rater_id][s.target_id] = { _total: s.score };
     }
   });
-  const activeId = (configArr && configArr.length > 0) ? configArr[0].value : (roundsArr[0] ? roundsArr[0].id : null);
+  var activeId = (configArr && configArr.length > 0) ? configArr[0].value : (roundsArr[0] ? roundsArr[0].id : null);
   roundsData = { rounds: Object.values(roundsMap), activeRoundId: activeId };
+  currentRoundWeights = {};
+  allUsers.forEach(function(u) { if (u.is_admin) currentRoundWeights[u.id] = 0; });
+}
+
+function loadRoundsDataFromLocal(rJson, wJson, sJson) {
+  try {
+    var localRounds = rJson ? JSON.parse(rJson) : null;
+    var localWeights = wJson ? JSON.parse(wJson) : {};
+    var localScores = sJson ? JSON.parse(sJson) : {};
+    if (localRounds && Array.isArray(localRounds)) {
+      // Normalize to v1.1.0 format
+      var normalized = localRounds.map(function(r) {
+        if (r.categories && Array.isArray(r.categories)) {
+          return r; // already v1.1.0 format
+        }
+        // Convert from v1.0.0 format
+        var config = r.config || {};
+        if (typeof config === 'string') { try { config = JSON.parse(config); } catch(e) { config = {}; } }
+        return {
+          id: r.id, name: r.name, createdAt: r.createdAt || r.created_at,
+          status: r.status || 'active',
+          categories: r.categories || config.categories || null,
+          scope: r.scope || config.scope || 'all',
+          scope_dept_ids: r.scope_dept_ids || config.scope_dept_ids || [],
+          start_date: r.start_date || null, end_date: r.end_date || null,
+          description: r.description || '',
+          config: config, scores: r.scores || {}
+        };
+      });
+      roundsData = { rounds: normalized, activeRoundId: normalized[0] ? normalized[0].id : null };
+    }
+    currentRoundWeights = localWeights || {};
+    currentScores = localScores || {};
+    allUsers.forEach(function(u) { if (u.is_admin) currentRoundWeights[u.id] = 0; });
+  } catch(e) { console.warn('loadRoundsDataFromLocal error:', e); }
 }
 
 async function loadRoundWeights(roundId) {
@@ -1039,25 +1134,40 @@ async function loadRoundWeights(roundId) {
 
 // ===== LOGIN =====
 async function doLogin() {
-  const username = document.getElementById('login-username').value.trim();
-  const password = document.getElementById('login-password').value;
+  var username = document.getElementById('login-username').value.trim();
+  var password = document.getElementById('login-password').value;
   if (!username) { showToast('请输入账号'); return; }
   if (!password) { showToast('请输入密码'); return; }
-  const btn = document.getElementById('btn-login');
+  var btn = document.getElementById('btn-login');
   btn.disabled = true; btn.textContent = '登录中...';
   showLoading(true); setLoadingMsg('验证账号...');
   try {
-    const client = initSupabase();
-    if (!client) throw new Error('SDK未加载');
-    const { data: users, error } = await client.from('users').select('*').eq('username', username).eq('is_active', true).single();
-    if (error || !users) { showToast('账号不存在或已禁用'); btn.disabled = false; btn.textContent = '登录 →'; showLoading(false); return; }
-    if (users.password !== password) { showToast('密码错误'); btn.disabled = false; btn.textContent = '登录 →'; showLoading(false); return; }
-    currentUser = users;
-    localStorage.setItem('cangku_current_user', JSON.stringify({ id: users.id, username: users.username, name: users.name, role: users.role, is_admin: users.is_admin, phone: users.phone, gender: users.gender, emoji: users.emoji, color: users.color, password: users.password, must_change_pwd: users.must_change_pwd }));
+    // Step 1: Try local authentication first
+    var foundUser = null;
+    if (allUsers.length > 0) {
+      allUsers.forEach(function(u) {
+        if (u.username === username && u.is_active !== false) foundUser = u;
+      });
+    }
+    // Step 2: If no local user, try cloud
+    if (!foundUser) {
+      var client = initSupabase();
+      if (client) {
+        try {
+          var result = await client.from('users').select('*').eq('username', username).eq('is_active', true).single();
+          foundUser = result.data;
+        } catch(e) { console.warn('Cloud login failed:', e); }
+      }
+    }
+    if (!foundUser) { showToast('账号不存在或已禁用'); btn.disabled = false; btn.textContent = '登录 →'; showLoading(false); return; }
+    if (foundUser.password !== password) { showToast('密码错误'); btn.disabled = false; btn.textContent = '登录 →'; showLoading(false); return; }
+    currentUser = foundUser;
+    localStorage.setItem(LS_CURRENT_USER, JSON.stringify({ id: foundUser.id, username: foundUser.username, name: foundUser.name, role: foundUser.role, is_admin: foundUser.is_admin, phone: foundUser.phone, gender: foundUser.gender, emoji: foundUser.emoji, color: foundUser.color, password: foundUser.password, must_change_pwd: foundUser.must_change_pwd }));
     setLoadingMsg('加载数据...');
     await loadAllData();
+    saveToLocalStorage();
     updateNavForUser();
-    subscribeRealtime();
+    if (!isLocalMode) subscribeRealtime();
     showLoading(false);
     btn.disabled = false; btn.textContent = '登录 →';
     if (currentUser.must_change_pwd) { showChangePassword(true); }
@@ -1074,9 +1184,16 @@ function updateNavForUser() {
 }
 
 function doLogout() {
-  currentUser = null; allUsers = []; departments = []; deptMembers = []; roundsData = null;
+  currentUser = null;
+  allUsers = []; departments = []; deptMembers = []; roundsData = null;
   currentScores = {}; confirmedSet = new Set(); currentRoundWeights = {};
-  localStorage.removeItem('cangku_current_user');
+  localStorage.removeItem(LS_CURRENT_USER);
+  localStorage.removeItem(LS_USERS);
+  localStorage.removeItem(LS_DEPTS);
+  localStorage.removeItem(LS_DEPT_MEMBERS);
+  localStorage.removeItem(LS_ROUNDS);
+  localStorage.removeItem(LS_ROUND_WEIGHTS);
+  localStorage.removeItem(LS_SCORES);
   document.getElementById('nav-user-info').style.display = 'none';
   document.getElementById('tab-admin').style.display = 'none';
   document.getElementById('btab-admin').style.display = 'none';
@@ -1084,7 +1201,7 @@ function doLogout() {
   showPage('login');
   document.getElementById('login-username').value = '';
   document.getElementById('login-password').value = '';
-  setCloudStatus('offline');
+  setCloudStatus(isLocalMode ? 'offline' : 'online');
 }
 
 // ===== CHANGE PASSWORD =====
@@ -1102,19 +1219,26 @@ function showChangePassword(forced) {
   document.getElementById('modal').classList.add('show');
 }
 async function doChangePassword() {
-  const newPwdEl = document.getElementById('pwd-new');
-  const confirmPwdEl = document.getElementById('pwd-confirm');
-  const oldPwdEl = document.getElementById('pwd-old');
-  const newPwd = newPwdEl ? newPwdEl.value : '';
-  const confirmPwd = confirmPwdEl ? confirmPwdEl.value : '';
+  var newPwdEl = document.getElementById('pwd-new');
+  var confirmPwdEl = document.getElementById('pwd-confirm');
+  var oldPwdEl = document.getElementById('pwd-old');
+  var newPwd = newPwdEl ? newPwdEl.value : '';
+  var confirmPwd = confirmPwdEl ? confirmPwdEl.value : '';
   if (!newPwd) { showToast('请输入新密码'); return; }
   if (newPwd !== confirmPwd) { showToast('两次密码不一致'); return; }
   if (!isForcedPwdChange && oldPwdEl && oldPwdEl.value !== currentUser.password) { showToast('旧密码错误'); return; }
-  const client = initSupabase();
-  if (!client) { showToast('网络错误'); return; }
   try {
-    const { error } = await client.from('users').update({ password: newPwd, must_change_pwd: false, updated_at: new Date().toISOString() }).eq('id', currentUser.id);
-    if (error) throw error;
+    var client = initSupabase();
+    if (client) {
+      await client.from('users').update({ password: newPwd, must_change_pwd: false, updated_at: new Date().toISOString() }).eq('id', currentUser.id);
+    }
+    currentUser.password = newPwd;
+    currentUser.must_change_pwd = false;
+    var idx = allUsers.findIndex(function(u) { return u.id === currentUser.id; });
+    if (idx !== -1) { allUsers[idx].password = newPwd; allUsers[idx].must_change_pwd = false; }
+    localStorage.setItem(LS_CURRENT_USER, JSON.stringify({ id: currentUser.id, username: currentUser.username, name: currentUser.name, role: currentUser.role, is_admin: currentUser.is_admin, phone: currentUser.phone, gender: currentUser.gender, emoji: currentUser.emoji, color: currentUser.color, password: newPwd, must_change_pwd: false }));
+    saveToLocalStorage();
+    hideModal();
     currentUser.password = newPwd; currentUser.must_change_pwd = false;
     localStorage.setItem('cangku_current_user', JSON.stringify({ id: currentUser.id, username: currentUser.username, name: currentUser.name, role: currentUser.role, is_admin: currentUser.is_admin, phone: currentUser.phone, gender: currentUser.gender, emoji: currentUser.emoji, color: currentUser.color, password: currentUser.password, must_change_pwd: false }));
     closeModal();
@@ -1195,7 +1319,15 @@ function getRoundById(id) {
 }
 function getCategories(round) {
   if (!round) return [{id:'total', name:'总分', weight:100}];
-  let config = round.config || {};
+  // v1.1.0: categories is a top-level field
+  if (round.categories && Array.isArray(round.categories) && round.categories.length > 0) {
+    return round.categories.map(function(c, i) {
+      if (typeof c === 'string') return { id: 'cat_' + i, name: c, weight: 100 / round.categories.length };
+      return { id: c.id || ('cat_' + i), name: c.name || c, weight: parseFloat(c.weight || (100 / round.categories.length)) };
+    });
+  }
+  // v1.0.0: categories in config
+  var config = round.config || {};
   if (typeof config === 'string') { try { config = JSON.parse(config); } catch(e) { config = {}; } }
   return config.categories || [{id:'total', name:'总分', weight:100}];
 }
@@ -1401,11 +1533,32 @@ async function submitAll() {
     for (const row of rows) {
       await client.from('scores').upsert(row, { onConflict: 'round_id,rater_id,target_id,category_id' });
     }
+    // Also save to local
+    rows.forEach(function(row) {
+      var rid = String(row.round_id);
+      var rater = String(row.rater_id);
+      var target = String(row.target_id);
+      var catId = row.category_id;
+      if (!currentScores[rid]) currentScores[rid] = {};
+      if (!currentScores[rid][rater]) currentScores[rid][rater] = {};
+      if (!currentScores[rid][rater][target]) currentScores[rid][rater][target] = {};
+      currentScores[rid][rater][target][catId] = row.raw_score;
+      // Update roundsData for dashboard
+      if (roundsData && roundsData.rounds) {
+        var r = roundsData.rounds.find(function(x) { return String(x.id) === rid; });
+        if (r) {
+          if (!r.scores) r.scores = {};
+          if (!r.scores[rater]) r.scores[rater] = {};
+          r.scores[rater][target] = { _total: row.score };
+          r.scores[rater][target][catId] = row.raw_score;
+        }
+      }
+    });
+    saveToLocalStorage();
     showLoading(false);
     showModal('🎉', '评分提交成功！', '您已完成对 ' + targets.length + ' 名同事的评分，感谢您的参与！');
     document.getElementById('btn-submit-all').disabled = true;
     document.getElementById('btn-submit-all').textContent = '✓ 已提交';
-    await loadAllData();
     renderDashboard();
   } catch(e) { console.error('submitAll error:', e); showLoading(false); showToast('提交失败: ' + e.message); }
 }
@@ -1693,76 +1846,90 @@ function showEditUserModal(userId) {
 }
 
 async function saveUser(editId) {
-  const username = document.getElementById('u-username').value.trim();
-  const name = document.getElementById('u-name').value.trim();
-  const role = document.getElementById('u-role').value.trim();
-  const phone = document.getElementById('u-phone').value.trim();
-  const gender = document.querySelector('input[name="u-gender"]:checked')?.value || '';
-  const isActive = document.querySelector('input[name="u-active"]:checked')?.value === 'true';
-  const deptCheckboxes = document.querySelectorAll('#modal-body input[type="checkbox"]:checked');
-  const selectedDepts = Array.from(deptCheckboxes).map(cb => parseInt(cb.value));
+  var username = document.getElementById('u-username').value.trim();
+  var name = document.getElementById('u-name').value.trim();
+  var role = document.getElementById('u-role').value.trim();
+  var phone = document.getElementById('u-phone').value.trim();
+  var gender = '';
+  var gEl = document.querySelector('input[name="u-gender"]:checked');
+  if (gEl) gender = gEl.value;
+  var aEl = document.querySelector('input[name="u-active"]:checked');
+  var isActive = aEl ? aEl.value === 'true' : true;
+  var deptCheckboxes = document.querySelectorAll('#modal-body input[type="checkbox"]:checked');
+  var selectedDepts = Array.from(deptCheckboxes).map(function(cb) { return parseInt(cb.value); });
   if (!username) { showToast('请填写登录账号'); return; }
   if (!name) { showToast('请填写姓名'); return; }
-  const client = initSupabase();
-  if (!client) { showToast('网络错误'); return; }
+  // Check duplicate username
+  var dup = allUsers.find(function(u) { return u.username === username && u.id !== editId; });
+  if (dup) { showToast('账号已存在'); return; }
   showLoading(true);
   try {
+    var client = initSupabase();
     if (editId) {
-      await client.from('users').update({ username, name, role, phone, gender, is_active: isActive, updated_at: new Date().toISOString() }).eq('id', editId);
-      // Update dept memberships
-      await client.from('department_members').delete().eq('user_id', editId);
-      for (const deptId of selectedDepts) {
-        await client.from('department_members').insert({ user_id: editId, department_id: deptId });
+      // Update locally first
+      var idx = allUsers.findIndex(function(u) { return u.id === editId; });
+      if (idx !== -1) {
+        allUsers[idx] = Object.assign({}, allUsers[idx], { username: username, name: name, role: role, phone: phone, gender: gender, is_active: isActive });
       }
-      showModal('✅', '修改成功', '人员信息已更新');
+      if (client) {
+        await client.from('users').update({ username, name, role, phone, gender, is_active: isActive, updated_at: new Date().toISOString() }).eq('id', editId);
+        await client.from('department_members').delete().eq('user_id', editId);
+        for (var di = 0; di < selectedDepts.length; di++) {
+          await client.from('department_members').insert({ user_id: editId, department_id: selectedDepts[di] });
+        }
+      }
+      showModal('✅', '修改成功', '人员信息已更新' + (isLocalMode ? '（本地保存）' : ''));
     } else {
-      // Check if username exists
-      const { data: existing } = await client.from('users').select('id').eq('username', username).single();
-      if (existing) { showToast('账号已存在'); showLoading(false); return; }
-      const { data: newUser, error } = await client.from('users').insert({ username, password: '1234', name, role, phone, gender, is_admin: false, must_change_pwd: true }).select('id').single();
-      if (error) throw error;
-      for (const deptId of selectedDepts) {
-        await client.from('department_members').insert({ user_id: newUser.id, department_id: deptId });
+      var newUserId = 'local_' + Date.now();
+      var newUser = { id: newUserId, username: username, password: '1234', name: name, role: role, phone: phone, gender: gender, is_admin: false, is_active: true, must_change_pwd: true, created_at: new Date().toISOString() };
+      if (client) {
+        try {
+          var ins = await client.from('users').insert({ username, password: '1234', name, role, phone, gender, is_admin: false, must_change_pwd: true }).select('id').single();
+          if (ins.data) { newUserId = ins.data.id; newUser.id = newUserId; }
+        } catch(e) { console.warn('Cloud user insert failed:', e); }
       }
-      showModal('✅', '添加成功', '人员已添加，初始密码为 1234');
+      allUsers.push(newUser);
+      showModal('✅', '添加成功', '人员已添加，初始密码为 1234' + (isLocalMode ? '（本地保存）' : ''));
     }
-    await loadAllData();
+    saveToLocalStorage();
     renderPersonnelSection();
     showLoading(false);
   } catch(e) { showLoading(false); showToast('操作失败: ' + e.message); }
 }
 
 function deleteUser(userId) {
-  const u = allUsers.find(x => x.id === userId);
+  var u = allUsers.find(function(x) { return x.id === userId; });
   if (!u) return;
-  showConfirmModal('🗑️', '删除人员', '确定要删除 "' + u.name + '" 吗？删除后数据无法恢复！', async () => {
-    const client = initSupabase();
-    if (!client) return;
+  showConfirmModal('🗑️', '删除人员', '确定要删除 "' + u.name + '" 吗？删除后数据无法恢复！', function() {
+    var client = initSupabase();
     showLoading(true);
-    try {
-      await client.from('users').delete().eq('id', userId);
-      await loadAllData();
+    var promise = client ? client.from('users').delete().eq('id', userId) : Promise.resolve();
+    promise.then(function() {
+      allUsers = allUsers.filter(function(u2) { return String(u2.id) !== String(userId); });
+      saveToLocalStorage();
       renderPersonnelSection();
       showToast('人员已删除');
-    } catch(e) { showToast('删除失败: ' + e.message); }
+    }).catch(function(e) { showToast('删除失败: ' + e.message); });
     showLoading(false);
   });
 }
 
 async function resetUserPassword(userId) {
-  const u = allUsers.find(x => x.id === userId);
+  var u = allUsers.find(function(x) { return x.id === userId; });
   if (!u) return;
-  showConfirmModal('🔑', '重置密码', '确定要将 "' + u.name + '" 的密码重置为 1234 吗？他们下次登录时需要修改密码。', async () => {
-    const client = initSupabase();
-    if (!client) return;
-    showLoading(true);
-    try {
-      await client.from('users').update({ password: '1234', must_change_pwd: true, updated_at: new Date().toISOString() }).eq('id', userId);
-      await loadAllData();
-      renderPersonnelSection();
-      showModal('✅', '密码已重置', u.name + ' 的密码已重置为 1234');
-    } catch(e) { showToast('重置失败: ' + e.message); }
-    showLoading(false);
+  showConfirmModal('🔑', '重置密码', '确定要将 "' + u.name + '" 的密码重置为 1234 吗？他们下次登录时需要修改密码。', function() {
+    var idx = allUsers.findIndex(function(x) { return x.id === userId; });
+    if (idx !== -1) {
+      allUsers[idx].password = '1234';
+      allUsers[idx].must_change_pwd = true;
+    }
+    var client = initSupabase();
+    if (client) {
+      client.from('users').update({ password: '1234', must_change_pwd: true, updated_at: new Date().toISOString() }).eq('id', userId).then(function() {}).catch(function(e) { console.warn(e); });
+    }
+    saveToLocalStorage();
+    renderPersonnelSection();
+    showModal('✅', '密码已重置', u.name + ' 的密码已重置为 1234');
   });
 }
 
@@ -2079,11 +2246,10 @@ async function confirmNewRound(editId) {
   });
   if (!valid || categories.length === 0) { showToast('请完善所有评分维度名称和权重'); return; }
   if (Math.abs(weightSum - 100) > 0.01) { showToast('权重合计必须=100%，当前=' + weightSum); return; }
-  var client = initSupabase();
-  if (!client) return;
   showLoading(true);
   try {
-    var payload = {
+    var newRound = {
+      id: editId || ('local_' + Date.now()),
       name: name,
       start_date: startDate || null,
       end_date: endDate || null,
@@ -2092,17 +2258,38 @@ async function confirmNewRound(editId) {
       scope_dept_ids: selectedScope === 'dept' ? scopeDeptIds : [],
       categories: categories,
       status: 'active',
-      updated_at: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      scores: {}
     };
-    if (editId) {
-      await client.from('rounds').update(payload).eq('id', editId);
-    } else {
-      await client.from('rounds').insert(payload);
+    // Try cloud first
+    var client = initSupabase();
+    if (client) {
+      var payload = {
+        name: name, start_date: startDate || null, end_date: endDate || null,
+        description: desc, scope: selectedScope,
+        scope_dept_ids: selectedScope === 'dept' ? scopeDeptIds : [],
+        categories: categories, status: 'active',
+        updated_at: new Date().toISOString()
+      };
+      if (editId && !String(editId).startsWith('local_')) {
+        await client.from('rounds').update(payload).eq('id', editId);
+      } else {
+        var ins = await client.from('rounds').insert(payload);
+        if (ins.data && ins.data[0]) newRound.id = ins.data[0].id;
+      }
     }
-    await loadRoundsData();
+    // Save locally
+    if (!roundsData) roundsData = { rounds: [], activeRoundId: null };
+    if (editId && String(editId).startsWith('local_')) {
+      // Remove old local round
+      roundsData.rounds = roundsData.rounds.filter(function(r) { return String(r.id) !== String(editId); });
+    }
+    roundsData.rounds.push(newRound);
+    roundsData.activeRoundId = newRound.id;
+    saveToLocalStorage();
     renderRoundsSection();
     hideModal();
-    showToast((editId ? '修改' : '创建') + '成功');
+    showToast((editId ? '修改' : '创建') + '成功' + (isLocalMode ? '（本地保存）' : ''));
   } catch(e) { showToast('保存失败: ' + e.message); }
   showLoading(false);
 }
@@ -2148,27 +2335,45 @@ async function init() {
   var LS_VER_KEY = 'jx_v110_ver';
   var storedVer = localStorage.getItem(LS_VER_KEY);
   if (storedVer && storedVer !== APP_VERSION) {
+    // Version changed: clear old cache but keep user data
     localStorage.removeItem('jx_current_user');
     localStorage.removeItem('jx_session');
-    localStorage.removeItem('jx_v110_scores');
-    localStorage.removeItem('jx_v110_rounds');
   }
   localStorage.setItem(LS_VER_KEY, APP_VERSION);
-  try {
-    await loadAllData();
-  } catch(e) {
-    console.warn('Cloud load failed, using local fallback:', e);
+  // Load from localStorage first (always works)
+  loadFromLocalStorage();
+  // If no users exist locally, create default admin account
+  if (allUsers.length === 0) {
+    var defaultAdmin = {
+      id: 1, username: 'admin', password: 'admin123', name: '管理员', role: 'admin',
+      is_admin: true, is_active: true, phone: '', gender: '保密', emoji: '👑', color: '#f59e0b',
+      must_change_pwd: true, created_at: new Date().toISOString()
+    };
+    allUsers = [defaultAdmin];
+    saveToLocalStorage();
+    setCloudStatus('offline');
+    showPage('login');
+    showToast('首次使用，已创建管理员账号：admin / admin123', 0);
+    showModal('👑', '欢迎使用绩效考评系统 v1.1.0', '<p style="color:#94a3b8;font-size:14px;line-height:1.6">系统检测到您是首次使用，已自动创建管理员账号：</p><div style="background:rgba(255,255,255,0.06);border-radius:10px;padding:14px;margin:12px 0;text-align:left"><div style="color:#e2e8f0;margin-bottom:6px">账号：<strong>admin</strong></div><div style="color:#e2e8f0;margin-bottom:6px">密码：<strong>admin123</strong></div><div style="color:#fbbf24;font-size:12px;margin-top:8px">⚠️ 首次登录须修改密码</div></div><p style="color:#64748b;font-size:13px">请登录后前往「系统管理 → 人员管理」添加其他账号。</p>');
+    return;
   }
-  var savedUserId = localStorage.getItem('jx_current_user');
-  if (savedUserId) {
-    var u = allUsers.find(function(x) { return String(x.id) === String(savedUserId); });
-    if (u) {
-      currentUser = u;
-      updateNavForUser();
-      var savedPage = localStorage.getItem('jx_last_page') || 'dashboard';
-      navigateTo(savedPage);
-      return;
-    }
+  // Try cloud sync
+  await loadAllData();
+  // Restore session
+  var savedUserJson = localStorage.getItem(LS_CURRENT_USER);
+  if (savedUserJson) {
+    try {
+      var savedUser = JSON.parse(savedUserJson);
+      // Find user in current list
+      var u = allUsers.find(function(x) { return String(x.id) === String(savedUser.id); });
+      if (u) {
+        currentUser = u;
+        updateNavForUser();
+        var savedPage = localStorage.getItem('jx_last_page') || 'dashboard';
+        navigateTo(savedPage);
+        return;
+      }
+    } catch(e) { console.warn('Session restore error:', e); }
   }
   showPage('login');
   showToast('请先登录', 0);

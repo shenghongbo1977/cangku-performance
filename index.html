@@ -930,9 +930,14 @@ function showToast(msg, duration) {
   el._timer = setTimeout(() => el.classList.remove('show'), duration || 2500);
 }
 function showModal(emoji, title, body, size) {
-  document.getElementById('modal-emoji').textContent = emoji || '✅';
-  document.getElementById('modal-title').textContent = title || '操作成功';
-  document.getElementById('modal-body').innerHTML = body || '';
+  console.log('showModal called:', emoji, title, body);
+  var emojiEl = document.getElementById('modal-emoji');
+  var titleEl = document.getElementById('modal-title');
+  var bodyEl = document.getElementById('modal-body');
+  console.log('Elements found:', emojiEl, titleEl, bodyEl);
+  if (emojiEl) emojiEl.textContent = emoji || '✅';
+  if (titleEl) titleEl.textContent = title || '操作成功';
+  if (bodyEl) bodyEl.innerHTML = body || '';
   document.getElementById('modal-actions').innerHTML = '<button class="btn btn-primary btn-full" onclick="closeModal()">确定</button>';
   var modalEl = document.getElementById('modal');
   modalEl.classList.remove('modal-wide', 'modal-lg');

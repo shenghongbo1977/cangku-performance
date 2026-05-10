@@ -1681,8 +1681,8 @@ function renderPersonnelSection() {
 
 function showAddUserModal() {
   const deptOptions = departments.map(d =>
-    '<label id="dept-label-' + d.id + '"><input type="checkbox" value="' + d.id + '" /> ' + d.name + '</label>'
-  ).join('');
+    '<label id="dept-label-' + d.id + '" style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(255,255,255,0.08);border-radius:6px;margin:2px;cursor:pointer"><input type="checkbox" value="' + d.id + '" /><span style="color:rgba(255,255,255,0.85);font-size:13px">' + d.name + '</span></label>'
+  ).join(' ');
   document.getElementById('modal-emoji').textContent = '👤';
   document.getElementById('modal-title').textContent = '添加人员';
   document.getElementById('modal-body').innerHTML = '<div style="text-align:left">' +
@@ -1702,7 +1702,7 @@ function showEditUserModal(userId) {
   if (!u) return;
   const userDepts = getUserDepartments(u.id);
   const deptOptions = departments.map(d =>
-    '<label id="dept-label-' + d.id + '" style="display:inline-flex;align-items:center;gap:4px;padding:4px 8px;background:rgba(255,255,255,0.1);border-radius:6px;margin:2px"><input type="checkbox" value="' + d.id + '"' + (userDepts.some(ud => ud.id === d.id) ? ' checked' : '') + ' /><span>' + d.name + '</span></label>'
+    '<label id="dept-label-' + d.id + '" style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(255,255,255,0.08);border-radius:6px;margin:2px;cursor:pointer"><input type="checkbox" value="' + d.id + '"' + (userDepts.some(ud => ud.id === d.id) ? ' checked' : '') + ' /><span style="color:rgba(255,255,255,0.85);font-size:13px">' + d.name + '</span></label>'
   ).join(' ');
   document.getElementById('modal-emoji').textContent = '✏️';
   document.getElementById('modal-title').textContent = '编辑人员';

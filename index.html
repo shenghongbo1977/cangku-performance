@@ -721,7 +721,7 @@
         <input class="form-input" id="login-password" type="password" placeholder="请输入密码" maxlength="50" autocomplete="current-password" />
       </div>
       <button class="btn btn-primary" id="btn-login" onclick="doLogin()">登录 →</button>
-      <p class="login-hint">初始账号: <strong>admin</strong> / 密码: <strong>1234</strong></p>
+      <p class="login-hint">初始账号: <strong>admin</strong> / 密码: <strong>admin123</strong></p>
     </div>
   </div>
 </div>
@@ -877,7 +877,7 @@ window.addEventListener('unhandledrejection', function(e) {
 <script>
 // ===== SUPABASE INIT =====
 const SUPABASE_URL = 'https://ehdzdwiynbzbcaqmppkv.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVoZHpkd2l5bmJ6YmNhcW1wcGt2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcxNTYxNjUsImV4cCI6MjA5MjczMjE2NX0.OdyGOANMtP1LvL4xIdO7';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVoZHpkd2l5bmJ6YmNhcW1wcGt2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcxNTYxNjUsImV4cCI6MjA5MjczMjE2NX0.OdyGOANMtP1LvL4gkSDbkdXU2BW8LVhN3rbmpJRqlPk';
 
 let db = null;
 function initSupabase() {
@@ -1918,7 +1918,7 @@ function deleteDepartment(deptId) {
 
 // ===== ROUND MANAGEMENT =====
 function renderRoundsSection() {
-  const rounds = roundsData || [];
+  const rounds = (roundsData && roundsData.rounds) || [];
   const activeRound = getActiveRound();
   let html = `
   <div class="section-header">
@@ -2174,10 +2174,12 @@ async function init() {
   var LS_VER_KEY = 'jx_v110_ver';
   var storedVer = localStorage.getItem(LS_VER_KEY);
   if (storedVer && storedVer !== APP_VERSION) {
-    localStorage.removeItem('jx_current_user');
-    localStorage.removeItem('jx_session');
+    localStorage.removeItem('cangku_current_user');
+    localStorage.removeItem('cangku_last_page');
     localStorage.removeItem('jx_v110_scores');
     localStorage.removeItem('jx_v110_rounds');
+    localStorage.removeItem('jx_current_user');
+    localStorage.removeItem('jx_session');
   }
   localStorage.setItem(LS_VER_KEY, APP_VERSION);
   try {
@@ -2185,16 +2187,20 @@ async function init() {
   } catch(e) {
     console.warn('Cloud load failed, using local fallback:', e);
   }
-  var savedUserId = localStorage.getItem('cangku_current_user');
-  if (savedUserId) {
-    var u = allUsers.find(function(x) { return String(x.id) === String(savedUserId); });
-    if (u) {
-      currentUser = u;
-      updateNavForUser();
-      var savedPage = localStorage.getItem('cangku_last_page') || 'dashboard';
-      showPage(savedPage);
-      return;
-    }
+  var savedUser = localStorage.getItem('cangku_current_user');
+  if (savedUser) {
+    try {
+      var uObj = JSON.parse(savedUser);
+      var u = allUsers.find(function(x) { return String(x.id) === String(uObj.id); });
+      if (u) {
+        currentUser = u;
+        updateNavForUser();
+        var savedPage = localStorage.getItem('cangku_last_page') || 'dashboard';
+        showPage(savedPage);
+        if (currentUser.must_change_pwd) { showChangePassword(true); }
+        return;
+      }
+    } catch(e) { console.warn('Restore login failed:', e); }
   }
   showPage('login');
   showToast('请先登录', 0);

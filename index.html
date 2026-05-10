@@ -1740,6 +1740,7 @@ async function saveUser(editId) {
       for (const deptId of selectedDepts) {
         await client.from('department_members').insert({ user_id: editId, department_id: deptId });
       }
+      showToast('✅ 人员信息已更新');
       showModal('✅', '修改成功', '人员信息已更新');
     } else {
       // Check if username exists
@@ -1750,6 +1751,7 @@ async function saveUser(editId) {
       for (const deptId of selectedDepts) {
         await client.from('department_members').insert({ user_id: newUser.id, department_id: deptId });
       }
+      showToast('✅ 人员已添加，初始密码为 1234');
       showModal('✅', '添加成功', '人员已添加，初始密码为 1234');
     }
     await loadAllData();
@@ -1882,9 +1884,11 @@ async function saveDepartment(editId) {
   try {
     if (editId) {
       await client.from('departments').update({ name, parent_id: parentId, head_user_id: headUserId, level, updated_at: new Date().toISOString() }).eq('id', editId);
+      showToast('✅ 部门信息已更新');
       showModal('✅', '修改成功', '部门信息已更新');
     } else {
       await client.from('departments').insert({ name, parent_id: parentId, head_user_id: headUserId, level, sort_order: departments.length });
+      showToast('✅ 部门已添加');
       showModal('✅', '添加成功', '部门已添加');
     }
     await loadAllData();

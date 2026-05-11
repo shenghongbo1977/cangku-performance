@@ -1034,6 +1034,21 @@ async function loadAllData() {
 }
 
 async function loadRoundsData(roundsArr, configArr, scoresArr) {
+  // 如果无参数调用，从数据库重新加载
+  if (!roundsArr) {
+    const client = initSupabase();
+    if (!client) return;
+    try {
+      const [roundsRes, configRes, scoresRes] = await Promise.all([
+        client.from('rounds').select('*').order('created_at', {ascending:true}),
+        client.from('app_config').select('value').eq('key', 'active_round_id'),
+        client.from('scores').select('*')
+      ]);
+      roundsArr = roundsRes.data || [];
+      configArr = configRes.data || [];
+      scoresArr = scoresRes.data || [];
+    } catch(e) { console.error('loadRoundsData fetch error:', e); return; }
+  }
   const roundsMap = {};
   roundsArr.forEach(r => {
     let config = r.config || {};
@@ -2159,7 +2174,8 @@ async function switchToRound(roundId) {
 }
 
 function deleteRound(roundId) {
-  var r = (roundsData || []).find(function(x) { return x.id === roundId; });
+  var rounds = (roundsData && roundsData.rounds) || [];
+  var r = rounds.find(function(x) { return x.id === roundId; });
   if (!r) return;
   showConfirmModal('🗑️', '删除轮次', '确定要删除轮次「' + r.name + '」吗？所有相关评分数据也会被清除！', async function() {
     var client = initSupabase();

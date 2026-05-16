@@ -646,6 +646,10 @@
     .dept-check-group { margin-bottom: 10px; }
     .dept-check-item { display: flex; align-items: center; gap: 8px; color: rgba(255,255,255,0.7); font-size: 14px; padding: 4px 0; cursor: pointer; }
     .dept-check-children { padding-left: 20px; border-left: 1px solid rgba(255,255,255,0.1); margin-left: 6px; }
+    .member-check-list { background: rgba(255,255,255,0.04); border-radius: 10px; padding: 12px; max-height: 200px; overflow-y: auto; display: flex; flex-wrap: wrap; gap: 4px; }
+    .round-card-scope { font-size: 13px; color: rgba(255,255,255,0.55); margin: 6px 0 2px; }
+    .scope-note { font-size: 13px; color: var(--warning); margin-bottom: 8px; padding: 6px 10px; background: rgba(245,158,11,0.1); border-radius: 6px; }
+    .text-muted { color: rgba(255,255,255,0.4); font-size: 12px; }
 
     /* PWA install */
     #pwa-install-btn { display:none; position:fixed; bottom:24px; right:24px; z-index:999; background: linear-gradient(135deg,#1a56db,#3b82f6); color:#fff; border:none; border-radius:30px; padding:12px 20px; font-size:14px; font-weight:600; box-shadow:0 4px 15px rgba(26,86,219,.45); cursor:pointer; }
@@ -721,7 +725,7 @@
         <input class="form-input" id="login-password" type="password" placeholder="请输入密码" maxlength="50" autocomplete="current-password" />
       </div>
       <button class="btn btn-primary" id="btn-login" onclick="doLogin()">登录 →</button>
-      <p class="login-hint">初始账号: <strong>admin</strong> / 密码: <strong>admin123</strong></p>
+      <p class="login-hint">初始账号: <strong>admin</strong> / 密码: <strong>1234</strong></p>
     </div>
   </div>
 </div>
@@ -782,7 +786,7 @@
   <div class="modal">
     <div class="emoji" id="modal-emoji">🎉</div>
     <h2 id="modal-title">操作成功</h2>
-    <p id="modal-body"></p>
+    <div id="modal-body"></div>
     <div class="modal-actions" id="modal-actions">
       <button class="btn btn-primary btn-full" onclick="closeModal()">确定</button>
     </div>
@@ -1113,8 +1117,10 @@ function updateNavForUser() {
   document.getElementById('nav-user-info').style.display = 'flex';
   document.getElementById('dropdown-user-emoji').textContent = currentUser.emoji || '👤';
   document.getElementById('dropdown-user-name').textContent = currentUser.name || currentUser.username;
-  document.getElementById('tab-admin').style.display = currentUser.is_admin ? 'inline-flex' : 'none';
-  document.getElementById('btab-admin').style.display = currentUser.is_admin ? 'flex' : 'none';
+  // Admin 或部门负责人都显示管理 Tab
+  const showAdmin = currentUser.is_admin || isDeptHead();
+  document.getElementById('tab-admin').style.display = showAdmin ? 'inline-flex' : 'none';
+  document.getElementById('btab-admin').style.display = showAdmin ? 'flex' : 'none';
 }
 
 function doLogout() {
@@ -1230,6 +1236,36 @@ function getVisibleUsers() {
   const visibleUserIds = deptMembers.filter(dm => scopeIds.includes(dm.department_id)).map(dm => dm.user_id);
   return allUsers.filter(u => visibleUserIds.includes(u.id) && !u.is_admin);
 }
+// ===== PERMISSION HELPERS =====
+// 判断当前用户是否是某个部门的负责人（含下级）
+function isDeptHead() {
+  if (!currentUser) return false;
+  return departments.some(d => d.head_user_id === currentUser.id);
+}
+// 判断当前用户是否可以创建考评轮次（admin 或部门负责人）
+function canCreateRound() {
+  if (!currentUser) return false;
+  if (currentUser.is_admin) return true;
+  return isDeptHead();
+}
+// 判断当前用户是否可以管理某个轮次（编辑/删除/设为当前）
+function canManageRound(round) {
+  if (!currentUser) return false;
+  if (currentUser.is_admin) return true;
+  const scopeDepts = getUserScopeDepts(); // 本级+下级部门
+  const scopeDeptIds = scopeDepts.map(d => String(d.id));
+  const cfg = (round && round.config) ? round.config : {};
+  const roundDeptIds = (cfg.scope_dept_ids || []).map(String);
+  // 轮次必须是 scope=dept，且有任意一个部门在当前用户的管辖范围内
+  return cfg.scope === 'dept' && roundDeptIds.some(id => scopeDeptIds.includes(id));
+}
+// 获取当前用户管辖的部门下所有成员（部门负责人专用）
+function getUserScopeMembers() {
+  const scopeDeptIds = getUserScopeDepts().map(d => d.id);
+  const memberUserIds = deptMembers.filter(dm => scopeDeptIds.includes(dm.department_id)).map(dm => dm.user_id);
+  return allUsers.filter(u => memberUserIds.includes(u.id) && !u.is_admin);
+}
+
 function getActiveRound() {
   if (!roundsData) return null;
   return roundsData.rounds.find(r => r.id === roundsData.activeRoundId) || roundsData.rounds[0] || null;
@@ -1247,13 +1283,23 @@ function getTargetsForRound(round) {
   if (!round) return [];
   let config = round.config || {};
   if (typeof config === 'string') { try { config = JSON.parse(config); } catch(e) { config = {}; } }
-  const ec = config.evaluatee_scope || {type:'all'};
+  // 优先用 evaluatee_scope；旧数据兼容：scope=dept 时自动用部门范围
+  let ec = config.evaluatee_scope;
+  if (!ec) {
+    if (config.scope === 'dept' && config.scope_dept_ids && config.scope_dept_ids.length > 0) {
+      ec = { type: 'department', department_ids: config.scope_dept_ids };
+    } else {
+      ec = { type: 'all' };
+    }
+  }
   let users = allUsers.filter(u => !u.is_admin && u.id !== currentUser.id);
   if (ec.type === 'department' && ec.department_ids && ec.department_ids.length > 0) {
-    const dmUserIds = deptMembers.filter(dm => ec.department_ids.includes(dm.department_id)).map(dm => dm.user_id);
+    const scopeIds = ec.department_ids.map(String);
+    const dmUserIds = deptMembers.filter(dm => scopeIds.includes(String(dm.department_id))).map(dm => dm.user_id);
     users = users.filter(u => dmUserIds.includes(u.id));
   } else if (ec.type === 'individual' && ec.user_ids && ec.user_ids.length > 0) {
-    users = users.filter(u => ec.user_ids.includes(u.id));
+    const scopeUIds = ec.user_ids.map(String);
+    users = users.filter(u => scopeUIds.includes(String(u.id)));
   }
   return users;
 }
@@ -1261,13 +1307,22 @@ function isUserEvaluator(round) {
   if (!round) return false;
   let config = round.config || {};
   if (typeof config === 'string') { try { config = JSON.parse(config); } catch(e) { config = {}; } }
-  const ec = config.evaluator_scope || {type:'all'};
+  // 优先用 evaluator_scope；旧数据兼容：scope=dept 时自动用部门范围
+  let ec = config.evaluator_scope;
+  if (!ec) {
+    if (config.scope === 'dept' && config.scope_dept_ids && config.scope_dept_ids.length > 0) {
+      ec = { type: 'department', department_ids: config.scope_dept_ids };
+    } else {
+      ec = { type: 'all' };
+    }
+  }
   if (ec.type === 'all') return true;
   if (ec.type === 'department' && ec.department_ids && ec.department_ids.length > 0) {
-    const userDeptIds = deptMembers.filter(dm => dm.user_id === currentUser.id).map(dm => dm.department_id);
-    return ec.department_ids.some(id => userDeptIds.includes(id));
+    const scopeIds = ec.department_ids.map(String);
+    const userDeptIds = deptMembers.filter(dm => dm.user_id === currentUser.id).map(dm => String(dm.department_id));
+    return scopeIds.some(id => userDeptIds.includes(id));
   }
-  if (ec.type === 'individual' && ec.user_ids) return ec.user_ids.includes(currentUser.id);
+  if (ec.type === 'individual' && ec.user_ids) return ec.user_ids.map(String).includes(String(currentUser.id));
   return true;
 }
 
@@ -1457,13 +1512,14 @@ async function submitAll() {
 // ===== DASHBOARD =====
 function calcScoresForRound(round) {
   const result = {};
+  if (!round) return result;
   const categories = getCategories(round);
+  const scoresData = round.scores || {};
   allUsers.forEach(u => {
     if (u.is_admin) return;
-    const received = []; // {catId: [scores]}
     const catScores = {};
     categories.forEach(c => catScores[c.id] = []);
-    Object.entries(round.scores).forEach(([raterId, raterScores]) => {
+    Object.entries(scoresData).forEach(([raterId, raterScores]) => {
       if (parseInt(raterId) === u.id) return; // skip self
       if (!raterScores[u.id]) return;
       const entry = raterScores[u.id];
@@ -1479,13 +1535,13 @@ function calcScoresForRound(round) {
     });
     let finalScore = null;
     if (categories.length === 1) {
-      const arr = catScores['total'];
+      const arr = catScores['total'] || [];
       if (arr.length > 0) finalScore = Math.round(arr.reduce((a, b) => a + b, 0) / arr.length * 10) / 10;
     } else {
       let weightedSum = 0;
       let hasAny = false;
       categories.forEach(c => {
-        const arr = catScores[c.id];
+        const arr = catScores[c.id] || [];
         if (arr.length > 0) {
           const avg = arr.reduce((a, b) => a + b, 0) / arr.length;
           weightedSum += avg * (c.weight / 100);
@@ -1500,7 +1556,7 @@ function calcScoresForRound(round) {
       rawScore: finalScore,
       finalScore: finalScore !== null ? Math.round(finalScore * weight * 10) / 10 : null,
       weight: weight,
-      raterCount: Object.values(catScores).filter(a => a.length > 0).length > 0 ? Object.keys(round.scores).length : 0
+      raterCount: Object.values(catScores).filter(a => a && a.length > 0).length > 0 ? Object.keys(scoresData).length : 0
     };
   });
   return result;
@@ -1658,11 +1714,30 @@ function switchAdminTab(tab) {
 }
 
 function renderAdminPage() {
-  if (!currentUser || !currentUser.is_admin) {
-    document.getElementById('admin-personnel').innerHTML = '<div class="empty-state"><div class="icon">🔒</div><p>您没有系统管理权限</p></div>';
+  if (!currentUser) {
+    document.getElementById('admin-personnel').innerHTML = '<div class="empty-state"><div class="icon">🔒</div><p>请先登录</p></div>';
     return;
   }
-  switchAdminTab('personnel');
+  // 部门负责人（非admin）：只显示考评管理Tab
+  const ptab = document.getElementById('subtab-personnel');
+  const dtab = document.getElementById('subtab-departments');
+  if (currentUser.is_admin) {
+    ptab.style.display = '';
+    dtab.style.display = '';
+    switchAdminTab('personnel');
+  } else if (canCreateRound()) {
+    // 部门负责人：隐藏人员和部门管理，直接进考评管理
+    ptab.style.display = 'none';
+    dtab.style.display = 'none';
+    // 激活考评Tab
+    document.querySelectorAll('.admin-subtab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.admin-section').forEach(s => s.classList.remove('active'));
+    document.getElementById('subtab-rounds').classList.add('active');
+    document.getElementById('admin-rounds').classList.add('active');
+    renderRoundsSection();
+  } else {
+    document.getElementById('admin-personnel').innerHTML = '<div class="empty-state"><div class="icon">🔒</div><p>您没有系统管理权限</p></div>';
+  }
 }
 
 // ===== PERSONNEL MANAGEMENT =====
@@ -1942,11 +2017,11 @@ function deleteDepartment(deptId) {
 function renderRoundsSection() {
   const rounds = (roundsData && roundsData.rounds) || [];
   const activeRound = getActiveRound();
-  let html = `
-  <div class="section-header">
-    <h2>🗓️ 轮次管理</h2>
-    <button class="btn-primary" onclick="showNewRoundModal()">+ 新建轮次</button>
-  </div>`;
+  let html = '<div class="section-header"><h2>🗓️ 轮次管理</h2>';
+  if (canCreateRound()) {
+    html += '<button class="btn-primary" onclick="showNewRoundModal()">+ 新建轮次</button>';
+  }
+  html += '</div>';
   if (rounds.length === 0) {
     html += '<div class="empty-tip">暂无轮次，请点击"新建轮次"创建</div>';
     document.getElementById('admin-rounds').innerHTML = html;
@@ -1955,32 +2030,37 @@ function renderRoundsSection() {
   html += '<div class="rounds-list">';
   rounds.slice().reverse().forEach(r => {
     const isActive = activeRound && r.id === activeRound.id;
+    const canMgr = canManageRound(r);
+    const cfg = r.config || {};
     const statusLabel = r.status === 'active'
       ? '<span class="badge badge-green">进行中</span>'
       : r.status === 'closed' ? '<span class="badge badge-gray">已结束</span>' : '<span class="badge">未知</span>';
-    html += `
-    <div class="round-card ${isActive ? 'round-card-active' : ''}">
-      <div class="round-card-header">
-        <div class="round-card-title">
-          <strong>${r.name || '未命名轮次'}</strong>
-          ${statusLabel}
-          ${isActive ? '<span class="badge badge-blue">当前轮次</span>' : ''}
-        </div>
-        <div class="round-card-actions">
-          <button class="btn-sm btn-outline" onclick="showNewRoundModal(${r.id})">编辑</button>
-          ${!isActive ? '<button class="btn-sm btn-success" onclick="switchToRound(${r.id})">设为当前</button>' : ''}
-          <button class="btn-sm btn-danger" onclick="deleteRound(${r.id})">删除</button>
-        </div>
-      </div>
-      <div class="round-card-meta">
-        <span>📅 ${r.start_date ? r.start_date.slice(0,10) : '未设置'} ~ ${r.end_date ? r.end_date.slice(0,10) : '未设置'}</span>
-      </div>
-      ${r.description ? '<div class="round-card-desc">' + r.description + '</div>' : ''}
-      <div class="round-card-cats">
-        <strong>评分维度（权重）：</strong>
-        ${renderRoundCategories(r)}
-      </div>
-    </div>`;
+    // 部门标签
+    let deptTagsHtml = '';
+    if (cfg.scope === 'dept' && cfg.scope_dept_ids && cfg.scope_dept_ids.length > 0) {
+      const deptNames = cfg.scope_dept_ids.map(id => { const d = departments.find(x => String(x.id) === String(id)); return d ? d.name : ''; }).filter(Boolean);
+      deptTagsHtml = '<div class="round-card-scope"><span>🏢 参与部门：</span>' + deptNames.map(n => '<span class="cat-tag">' + n + '</span>').join(' ') + '</div>';
+    } else if (cfg.scope !== 'dept') {
+      deptTagsHtml = '<div class="round-card-scope"><span>🌐 全部部门</span></div>';
+    }
+    html += '<div class="round-card ' + (isActive ? 'round-card-active' : '') + '">' +
+      '<div class="round-card-header">' +
+        '<div class="round-card-title">' +
+          '<strong>' + (r.name || '未命名轮次') + '</strong>' +
+          statusLabel +
+          (isActive ? '<span class="badge badge-blue">当前轮次</span>' : '') +
+        '</div>' +
+        '<div class="round-card-actions">' +
+          (canMgr ? '<button class="btn-sm btn-outline" onclick="showNewRoundModal(\'' + r.id + '\')">编辑</button>' : '') +
+          (canMgr && !isActive ? '<button class="btn-sm btn-success" onclick="switchToRound(\'' + r.id + '\')">设为当前</button>' : '') +
+          (canMgr ? '<button class="btn-sm btn-danger" onclick="deleteRound(\'' + r.id + '\')">删除</button>' : '') +
+        '</div>' +
+      '</div>' +
+      '<div class="round-card-meta"><span>📅 ' + (cfg.start_date ? cfg.start_date.slice(0,10) : '未设置') + ' ~ ' + (cfg.end_date ? cfg.end_date.slice(0,10) : '未设置') + '</span></div>' +
+      (cfg.description ? '<div class="round-card-desc">' + cfg.description + '</div>' : '') +
+      deptTagsHtml +
+      '<div class="round-card-cats"><strong>评分维度（权重）：</strong>' + renderRoundCategories(r) + '</div>' +
+    '</div>';
   });
   html += '</div>';
   document.getElementById('admin-rounds').innerHTML = html;
@@ -1993,69 +2073,210 @@ function renderRoundCategories(r) {
   ).join(' ');
 }
 
-function showNewRoundModal(editId) {
-  const r = editId ? (roundsData || []).find(x => x.id === editId) : null;
+async function showNewRoundModal(editId) {
+  // 确保部门数据已加载（最多等5秒）
+  if (!departments || departments.length === 0) {
+    var client = initSupabase();
+    if (client) {
+      try {
+        var { data } = await Promise.race([
+          client.from('departments').select('*').order('sort_order'),
+          new Promise(function(res, rej) { setTimeout(function() { rej(new Error('timeout')); }, 5000); })
+        ]);
+        if (data && data.length > 0) departments = data;
+      } catch(e) { console.warn('加载部门超时，将在切换指定部门时重试'); }
+    }
+  }
+  const rounds = (roundsData && roundsData.rounds) || [];
+  const r = editId ? rounds.find(x => String(x.id) === String(editId)) : null;
+  // 权限校验：编辑时必须有管理权限
+  if (editId && r && !canManageRound(r)) { showToast('您无权编辑此轮次'); return; }
   const nowStr = new Date().toISOString().slice(0,16);
   const ymd = nowStr.slice(0,10);
-  const categories = r && r.categories ? r.categories : [{ name: '', weight: 1 }];
+  const cfg = (r && r.config) ? r.config : {};
+  const categories = cfg.categories && cfg.categories.length > 0 ? cfg.categories : [{ name: '', weight: 100 }];
   let catHtml = '';
   categories.forEach(function(c, i) {
     catHtml += '<div class="cat-item-row" id="cat-row-' + i + '">' +
       '<input type="text" class="form-control cat-name" placeholder="维度名称，如：工作态度" value="' + (c.name || '') + '" oninput="updateCatSum()">' +
-      '<input type="number" class="form-control cat-weight" placeholder="权重%" min="1" max="100" value="' + (parseFloat(c.weight || 0)*100 || 100) + '" oninput="updateCatSum()">' +
+      '<input type="number" class="form-control cat-weight" placeholder="权重%" min="1" max="100" value="' + (c.weight || 0) + '" oninput="updateCatSum()">' +
       '<button class="btn-icon" onclick="removeCatItem(' + i + ')">✕</button>' +
     '</div>';
   });
-  showModal('📋', editId ? '编辑轮次' : '新建轮次', '<form id="round-form" onsubmit="event.preventDefault(); confirmNewRound(' + (editId || 'null') + ');">' +
-    '<div class="form-group"><label>轮次名称 *</label><input type="text" id="r-name" class="form-control" required value="' + (r ? r.name : '') + '" placeholder="如：2025年Q1季度考评"></div>' +
-    '<div class="form-row"><div class="form-group"><label>开始日期</label><input type="date" id="r-start" class="form-control" value="' + (r && r.start_date ? r.start_date.slice(0,10) : ymd) + '"></div><div class="form-group"><label>结束日期</label><input type="date" id="r-end" class="form-control" value="' + (r && r.end_date ? r.end_date.slice(0,10) : '') + '"></div></div>' +
-    '<div class="form-group"><label>说明</label><textarea id="r-desc" class="form-control" rows="2" placeholder="可选备注说明">' + (r ? (r.description || '') : '') + '</textarea></div>' +
-    '<div class="form-group"><label>评分维度（至少1项，权重之和须=100%）</label>' +
-    '<div id="cat-list">' + catHtml + '</div>' +
-    '<button type="button" class="btn-sm btn-outline mt-8" onclick="addCategoryItem()">+ 添加维度</button>' +
-    '<div class="cat-sum-bar"><div class="cat-sum-bar-fill" id="cat-sum-bar-fill" style="width:100%"></div><span class="cat-sum-text" id="cat-sum-text">权重合计：100%</span></div></div>' +
-    '<div class="form-group"><label>可见范围</label>' +
-    '<div class="scope-options">' +
-      '<label class="scope-opt"><input type="radio" name="r-scope" value="all" ' + ((!r || r.scope === 'all') ? 'checked' : '') + '><span>全部部门</span></label>' +
-      '<label class="scope-opt"><input type="radio" name="r-scope" value="dept" ' + ((r && r.scope === 'dept') ? 'checked' : '') + '><span>指定部门</span></label>' +
+
+  // 部门范围：admin 可以选全部；部门负责人只能选指定部门（强制 scope=dept）
+  const isDeptHeadUser = !currentUser.is_admin && canCreateRound();
+  const currentScopeAll = (!cfg.scope || cfg.scope === 'all');
+  let scopeHtml = '';
+  if (!isDeptHeadUser) {
+    // admin：可以选全部或指定部门
+    scopeHtml = '<div class="scope-options">' +
+      '<label class="scope-opt"><input type="radio" name="r-scope" value="all" ' + (currentScopeAll ? 'checked' : '') + ' onclick="toggleScopeOption()"><span>全部部门</span></label>' +
+      '<label class="scope-opt"><input type="radio" name="r-scope" value="dept" ' + (!currentScopeAll ? 'checked' : '') + ' onclick="toggleScopeOption()"><span>指定部门</span></label>' +
     '</div>' +
-    '<div id="scope-dept-picker" style="display:' + ((r && r.scope === 'dept') ? 'block' : 'none') + '"><div class="dept-check-list" id="dept-check-list"></div></div></div>' +
-    '<div class="form-actions"><button type="button" class="btn-outline" onclick="hideModal()">取消</button><button type="submit" class="btn-primary">保存</button></div>' +
-  '</form>', 'lg');
+    '<div id="scope-dept-picker" style="display:' + (!currentScopeAll ? 'block' : 'none') + '">' +
+      '<div class="dept-check-list" id="dept-check-list"></div>' +
+    '</div>';
+  } else {
+    // 部门负责人：强制指定部门（隐藏 radio，自动选 dept）
+    scopeHtml = '<div class="scope-note">作为部门负责人，您只能在管辖范围内创建轮次</div>' +
+      '<input type="hidden" name="r-scope" value="dept">' +
+      '<div id="scope-dept-picker">' +
+        '<div class="dept-check-list" id="dept-check-list"></div>' +
+      '</div>';
+  }
+
+  // 参与考评人员选择器
+  const memberScopeUserIds = (cfg.evaluatee_scope && cfg.evaluatee_scope.user_ids) || [];
+  const memberScopeType = (cfg.evaluatee_scope && cfg.evaluatee_scope.type) || 'dept_all';
+  let memberScopeHtml = '<div class="form-group" id="member-scope-group">' +
+    '<label>参与考评人员</label>' +
+    '<div class="scope-options">' +
+      '<label class="scope-opt"><input type="radio" name="r-member-scope" value="dept_all" ' + (memberScopeType !== 'individual' ? 'checked' : '') + ' onclick="toggleMemberScopeOption()"><span>部门全体成员</span></label>' +
+      '<label class="scope-opt"><input type="radio" name="r-member-scope" value="individual" ' + (memberScopeType === 'individual' ? 'checked' : '') + ' onclick="toggleMemberScopeOption()"><span>指定人员</span></label>' +
+    '</div>' +
+    '<div id="member-individual-picker" style="display:' + (memberScopeType === 'individual' ? 'block' : 'none') + '">' +
+      '<div class="member-check-list" id="member-check-list"></div>' +
+    '</div>' +
+  '</div>';
+
+  showModal('📋', editId ? '编辑轮次' : '新建轮次',
+    '<form id="round-form" onsubmit="event.preventDefault(); confirmNewRound(' + (editId ? '\'' + editId + '\'' : 'null') + ');">' +
+    '<div class="form-group"><label>轮次名称 *</label><input type="text" id="r-name" class="form-control" required value="' + (r ? r.name : '') + '" placeholder="如：2025年Q1季度考评"></div>' +
+    '<div class="form-row"><div class="form-group"><label>开始日期</label><input type="date" id="r-start" class="form-control" value="' + (cfg.start_date ? cfg.start_date.slice(0,10) : ymd) + '"></div><div class="form-group"><label>结束日期</label><input type="date" id="r-end" class="form-control" value="' + (cfg.end_date ? cfg.end_date.slice(0,10) : '') + '"></div></div>' +
+    '<div class="form-group"><label>说明</label><textarea id="r-desc" class="form-control" rows="2" placeholder="可选备注说明">' + (cfg.description || '') + '</textarea></div>' +
+    '<div class="form-group"><label>评分维度（至少1项，权重之和须=100%）</label>' +
+      '<div id="cat-list">' + catHtml + '</div>' +
+      '<button type="button" class="btn-sm btn-outline mt-8" onclick="addCategoryItem()">+ 添加维度</button>' +
+      '<div class="cat-sum-bar"><div class="cat-sum-bar-fill" id="cat-sum-bar-fill" style="width:100%"></div><span class="cat-sum-text" id="cat-sum-text">权重合计：100%</span></div>' +
+    '</div>' +
+    '<div class="form-group"><label>可见范围</label>' + scopeHtml + '</div>' +
+    memberScopeHtml +
+    '<div class="form-actions"><button type="button" class="btn-outline" onclick="closeModal()">取消</button><button type="submit" class="btn-primary">保存</button></div>' +
+    '</form>', 'lg');
+  // 隐藏 showModal 默认渲染的"确定"按钮（与表单的"保存"重复）
+  var modalActs = document.getElementById('modal-actions');
+  if (modalActs) modalActs.innerHTML = '';
   updateCatSum();
-  renderDeptCheckboxesForRound(r ? (r.scope_dept_ids || []) : []);
+  renderDeptCheckboxesForRound(cfg.scope_dept_ids || []);
 }
 
+// 渲染部门复选框（仅展示当前用户有权限的部门）
 function renderDeptCheckboxesForRound(selectedIds) {
   const container = document.getElementById('dept-check-list');
   if (!container) return;
-  if (departments.length === 0) {
-    container.innerHTML = '<div class="empty-tip">暂无部门，请先添加部门</div>';
+  // 部门未加载时显示加载状态，并触发重新获取
+  if (!departments || departments.length === 0) {
+    container.innerHTML = '<div class="empty-tip" id="dept-loading-tip">正在加载部门…</div>';
+    var client = initSupabase();
+    if (client) {
+      client.from('departments').select('*').order('sort_order').then(function(res) {
+        if (res.data && res.data.length > 0) {
+          departments = res.data;
+          var c2 = document.getElementById('dept-check-list');
+          if (c2) renderDeptCheckboxesForRound(selectedIds || []);
+        } else {
+          var tip = document.getElementById('dept-loading-tip');
+          if (tip) tip.textContent = '暂无部门，请先添加部门';
+        }
+      }).catch(function() {
+        var tip = document.getElementById('dept-loading-tip');
+        if (tip) tip.textContent = '加载失败，请刷新重试';
+      });
+    } else {
+      container.innerHTML = '<div class="empty-tip">未连接服务器，请检查网络</div>';
+    }
     return;
   }
-  const topDepts = departments.filter(function(d) { return !d.parent_id; });
+  // 部门负责人只能选自己管辖的部门
+  const isDeptHeadUser = !currentUser.is_admin && canCreateRound();
+  const allowedDepts = isDeptHeadUser ? getUserScopeDepts() : departments;
+  const allowedIds = allowedDepts.map(d => d.id);
+  const topDepts = allowedDepts.filter(function(d) { return !d.parent_id || !allowedIds.includes(d.parent_id); });
   let html = '';
   topDepts.forEach(function(d) {
-    const checked = selectedIds.indexOf(d.id) !== -1 ? 'checked' : '';
-    const children = departments.filter(function(c) { return c.parent_id === d.id; });
+    const sid = String(d.id);
+    const checked = selectedIds.map(String).indexOf(sid) !== -1 ? 'checked' : '';
+    const children = allowedDepts.filter(function(c) { return String(c.parent_id) === sid; });
     let childHtml = '';
     children.forEach(function(c) {
-      const cChecked = selectedIds.indexOf(c.id) !== -1 ? 'checked' : '';
-      childHtml += '<label class="dept-check-item"><input type="checkbox" value="' + c.id + '" ' + cChecked + '> ' + c.name + '</label>';
+      const csid = String(c.id);
+      const cChecked = selectedIds.map(String).indexOf(csid) !== -1 ? 'checked' : '';
+      childHtml += '<label class="dept-check-item"><input type="checkbox" value="' + csid + '" ' + cChecked + ' onchange="onDeptScopeChanged()"> ' + c.name + '</label>';
     });
     html += '<div class="dept-check-group">' +
-      '<label class="dept-check-item"><input type="checkbox" value="' + d.id + '" ' + checked + ' onclick="toggleScopeOption(this)"> <strong>' + d.name + '</strong></label>' +
+      '<label class="dept-check-item"><input type="checkbox" value="' + sid + '" ' + checked + ' onchange="onDeptScopeChanged()"> <strong>' + d.name + '</strong></label>' +
       (childHtml ? '<div class="dept-check-children">' + childHtml + '</div>' : '') +
     '</div>';
+  });
+  container.innerHTML = html || '<div class="empty-tip">暂无可用部门</div>';
+  // 部门改变后重新渲染成员选择器
+  onDeptScopeChanged();
+}
+
+// 部门勾选变化时刷新成员列表
+function onDeptScopeChanged() {
+  var checkboxes = document.querySelectorAll('#dept-check-list input[type=checkbox]:checked');
+  var selectedDeptIds = [];
+  for (var i = 0; i < checkboxes.length; i++) selectedDeptIds.push(String(checkboxes[i].value));
+  renderMemberCheckboxesForRound([], selectedDeptIds);
+}
+
+// 渲染"指定人员"复选框（按选中的部门过滤成员）
+function renderMemberCheckboxesForRound(selectedUserIds, deptIds) {
+  var container = document.getElementById('member-check-list');
+  if (!container) return;
+  if (!deptIds || deptIds.length === 0) {
+    container.innerHTML = '<div class="empty-tip">请先在上方选择部门</div>';
+    return;
+  }
+  var memberUserIds = deptMembers.filter(function(dm) { return deptIds.includes(String(dm.department_id)); }).map(function(dm) { return dm.user_id; });
+  var members = allUsers.filter(function(u) { return memberUserIds.includes(u.id) && !u.is_admin; });
+  if (members.length === 0) {
+    container.innerHTML = '<div class="empty-tip">所选部门暂无成员</div>';
+    return;
+  }
+  var html = '';
+  members.forEach(function(u) {
+    const checked = selectedUserIds.map(String).indexOf(String(u.id)) !== -1 ? 'checked' : '';
+    html += '<label class="dept-check-item"><input type="checkbox" value="' + u.id + '" ' + checked + '> ' + (u.name || u.username) + (u.role ? '<span class="text-muted"> · ' + u.role + '</span>' : '') + '</label>';
   });
   container.innerHTML = html;
 }
 
-function toggleScopeOption(el) {
+function toggleScopeOption() {
   var scopeRadios = document.getElementsByName('r-scope');
   var selectedScope = 'all';
   for (var i = 0; i < scopeRadios.length; i++) { if (scopeRadios[i].checked) { selectedScope = scopeRadios[i].value; break; } }
-  document.getElementById('scope-dept-picker').style.display = selectedScope === 'dept' ? 'block' : 'none';
+  var picker = document.getElementById('scope-dept-picker');
+  if (!picker) return;
+  picker.style.display = selectedScope === 'dept' ? 'block' : 'none';
+  if (selectedScope === 'dept') {
+    var list = document.getElementById('dept-check-list');
+    if (list && list.children.length === 0 && (!departments || departments.length === 0)) {
+      var client = initSupabase();
+      if (client) {
+        client.from('departments').select('*').order('sort_order').then(function(res) {
+          if (res.data && res.data.length > 0) {
+            departments = res.data;
+            renderDeptCheckboxesForRound([]);
+          }
+        }).catch(function() {
+          var list2 = document.getElementById('dept-check-list');
+          if (list2) list2.innerHTML = '<div class="empty-tip">加载失败，请刷新重试</div>';
+        });
+      }
+    }
+  }
+}
+
+function toggleMemberScopeOption() {
+  var radios = document.getElementsByName('r-member-scope');
+  var val = 'dept_all';
+  for (var i = 0; i < radios.length; i++) { if (radios[i].checked) { val = radios[i].value; break; } }
+  var picker = document.getElementById('member-individual-picker');
+  if (picker) picker.style.display = val === 'individual' ? 'block' : 'none';
+  if (val === 'individual') onDeptScopeChanged();
 }
 
 function addCategoryItem() {
@@ -2103,14 +2324,28 @@ async function confirmNewRound(editId) {
   var startDate = document.getElementById('r-start').value;
   var endDate = document.getElementById('r-end').value;
   var desc = document.getElementById('r-desc').value.trim();
+  // 可见范围（scope）
   var scopeRadios = document.getElementsByName('r-scope');
   var selectedScope = 'all';
   for (var i = 0; i < scopeRadios.length; i++) { if (scopeRadios[i].checked) { selectedScope = scopeRadios[i].value; break; } }
+  // 选中的部门 ID
   var scopeDeptIds = [];
   if (selectedScope === 'dept') {
     var checkboxes = document.querySelectorAll('#dept-check-list input[type=checkbox]:checked');
     for (var j = 0; j < checkboxes.length; j++) scopeDeptIds.push(parseInt(checkboxes[j].value));
+    if (scopeDeptIds.length === 0) { showToast('请至少选择一个部门'); return; }
   }
+  // 参与考评人员范围
+  var memberRadios = document.getElementsByName('r-member-scope');
+  var memberScopeType = 'dept_all';
+  for (var mi = 0; mi < memberRadios.length; mi++) { if (memberRadios[mi].checked) { memberScopeType = memberRadios[mi].value; break; } }
+  var memberUserIds = [];
+  if (memberScopeType === 'individual') {
+    var memberCbs = document.querySelectorAll('#member-check-list input[type=checkbox]:checked');
+    for (var mk = 0; mk < memberCbs.length; mk++) memberUserIds.push(memberCbs[mk].value);
+    if (memberUserIds.length === 0) { showToast('请至少选择一名参与考评人员'); return; }
+  }
+  // 评分维度
   var catRows = document.querySelectorAll('#cat-list .cat-item-row');
   var categories = [];
   var weightSum = 0;
@@ -2122,45 +2357,84 @@ async function confirmNewRound(editId) {
     var catWeight = parseFloat(weightInp ? weightInp.value : '0');
     if (!catName) { valid = false; return; }
     if (isNaN(catWeight) || catWeight <= 0) { valid = false; return; }
-    categories.push({ name: catName, weight: catWeight / 100 });
+    categories.push({ id: 'c_' + catName.replace(/\s+/g,'_'), name: catName, weight: catWeight });
     weightSum += catWeight;
   });
   if (!valid || categories.length === 0) { showToast('请完善所有评分维度名称和权重'); return; }
   if (Math.abs(weightSum - 100) > 0.01) { showToast('权重合计必须=100%，当前=' + weightSum); return; }
+
+  // 构建 evaluatee_scope（被评人范围）和 evaluator_scope（评分人范围）
+  var evaluateeScope, evaluatorScope;
+  if (selectedScope === 'all') {
+    evaluateeScope = { type: 'all' };
+    evaluatorScope = { type: 'all' };
+  } else {
+    // 指定部门
+    if (memberScopeType === 'individual') {
+      evaluateeScope = { type: 'individual', user_ids: memberUserIds };
+    } else {
+      evaluateeScope = { type: 'department', department_ids: scopeDeptIds };
+    }
+    evaluatorScope = { type: 'department', department_ids: scopeDeptIds };
+  }
+
   var client = initSupabase();
   if (!client) return;
   showLoading(true);
   try {
-    var payload = {
-      name: name,
-      start_date: startDate || null,
-      end_date: endDate || null,
-      description: desc,
-      scope: selectedScope,
-      scope_dept_ids: selectedScope === 'dept' ? scopeDeptIds : [],
-      categories: categories,
-      status: 'active',
-      updated_at: new Date().toISOString()
-    };
+    var payload = { name: name, status: 'active' };
     if (editId) {
-      await client.from('rounds').update(payload).eq('id', editId);
+      var { data: existing } = await client.from('rounds').select('config').eq('id', String(editId)).single();
+      if (!existing) throw new Error('未找到该轮次，请刷新后重试');
+      var existingConfig = {};
+      if (existing.config) {
+        try { existingConfig = typeof existing.config === 'string' ? JSON.parse(existing.config) : existing.config; } catch(e) {}
+      }
+      existingConfig.categories = categories;
+      existingConfig.start_date = startDate || null;
+      existingConfig.end_date = endDate || null;
+      existingConfig.description = desc;
+      existingConfig.scope = selectedScope;
+      existingConfig.scope_dept_ids = selectedScope === 'dept' ? scopeDeptIds : [];
+      existingConfig.evaluatee_scope = evaluateeScope;
+      existingConfig.evaluator_scope = evaluatorScope;
+      payload.config = JSON.stringify(existingConfig);
+      var updateRes = await client.from('rounds').update(payload).eq('id', String(editId));
+      if (updateRes.error) throw new Error('更新失败: ' + updateRes.error.message);
     } else {
-      await client.from('rounds').insert(payload);
+      payload.id = 'r_' + Date.now();
+      payload.config = JSON.stringify({
+        categories: categories,
+        start_date: startDate || null,
+        end_date: endDate || null,
+        description: desc,
+        scope: selectedScope,
+        scope_dept_ids: selectedScope === 'dept' ? scopeDeptIds : [],
+        evaluatee_scope: evaluateeScope,
+        evaluator_scope: evaluatorScope,
+        rules: { mgr_rates_all: true, staff_rate_peers: true, include_supervisors: true }
+      });
+      var insertRes = await client.from('rounds').insert(payload);
+      if (insertRes.error) throw new Error('创建失败: ' + insertRes.error.message);
     }
     await loadRoundsData();
     renderRoundsSection();
-    hideModal();
+    closeModal();
     showToast((editId ? '修改' : '创建') + '成功');
   } catch(e) { showToast('保存失败: ' + e.message); }
   showLoading(false);
 }
 
 async function switchToRound(roundId) {
+  var rounds = (roundsData && roundsData.rounds) || [];
+  var r = rounds.find(function(x) { return String(x.id) === String(roundId); });
+  if (r && !canManageRound(r)) { showToast('您无权切换此轮次'); return; }
   var client = initSupabase();
   if (!client) return;
   showLoading(true);
   try {
-    var existing = appConfig.find(function(c) { return c.key === 'active_round_id'; });
+    // 先查询是否已有记录，有则更新，无则插入
+    var { data: existing } = await client.from('app_config').select('key').eq('key', 'active_round_id').maybeSingle();
     if (existing) {
       await client.from('app_config').update({ value: String(roundId) }).eq('key', 'active_round_id');
     } else {
@@ -2175,8 +2449,9 @@ async function switchToRound(roundId) {
 
 function deleteRound(roundId) {
   var rounds = (roundsData && roundsData.rounds) || [];
-  var r = rounds.find(function(x) { return x.id === roundId; });
+  var r = rounds.find(function(x) { return String(x.id) === String(roundId); });
   if (!r) return;
+  if (!canManageRound(r)) { showToast('您无权删除此轮次'); return; }
   showConfirmModal('🗑️', '删除轮次', '确定要删除轮次「' + r.name + '」吗？所有相关评分数据也会被清除！', async function() {
     var client = initSupabase();
     if (!client) return;

@@ -713,7 +713,7 @@
     <div class="login-card">
       <div class="login-title">
         <div class="big">📦 绩效考评系统</div>
-        <div class="sub" style="font-size:11px;color:#9ca3af;margin-top:4px">v1.1.0</div>
+        <div class="sub" style="font-size:11px;color:#9ca3af;margin-top:4px">v1.2.0</div>
       </div>
       <div class="login-divider"></div>
       <div class="form-group">
@@ -1020,36 +1020,33 @@ async function loadAllData() {
   if (!client) return false;
   setCloudStatus('connecting');
   try {
-    const [usersRes, deptsRes, deptMRes, roundsRes, configRes, scoresRes] = await Promise.all([
+    const [usersRes, deptsRes, deptMRes, roundsRes, scoresRes] = await Promise.all([
       client.from('users').select('*').eq('is_active', true).order('id'),
       client.from('departments').select('*').eq('is_active', true).order('sort_order'),
       client.from('department_members').select('*'),
       client.from('rounds').select('*').order('created_at', {ascending:true}),
-      client.from('app_config').select('value').eq('key', 'active_round_id'),
       client.from('scores').select('*')
     ]);
     allUsers = usersRes.data || [];
     departments = deptsRes.data || [];
     deptMembers = deptMRes.data || [];
     setCloudStatus('online');
-    await loadRoundsData(roundsRes.data || [], configRes.data || [], scoresRes.data || []);
+    await loadRoundsData(roundsRes.data || [], scoresRes.data || []);
     return true;
   } catch(e) { console.error('loadAllData error:', e); setCloudStatus('error'); return false; }
 }
 
-async function loadRoundsData(roundsArr, configArr, scoresArr) {
+async function loadRoundsData(roundsArr, scoresArr) {
   // 如果无参数调用，从数据库重新加载
   if (!roundsArr) {
     const client = initSupabase();
     if (!client) return;
     try {
-      const [roundsRes, configRes, scoresRes] = await Promise.all([
+      const [roundsRes, scoresRes] = await Promise.all([
         client.from('rounds').select('*').order('created_at', {ascending:true}),
-        client.from('app_config').select('value').eq('key', 'active_round_id'),
         client.from('scores').select('*')
       ]);
       roundsArr = roundsRes.data || [];
-      configArr = configRes.data || [];
       scoresArr = scoresRes.data || [];
     } catch(e) { console.error('loadRoundsData fetch error:', e); return; }
   }
@@ -1057,7 +1054,7 @@ async function loadRoundsData(roundsArr, configArr, scoresArr) {
   roundsArr.forEach(r => {
     let config = r.config || {};
     if (typeof config === 'string') { try { config = JSON.parse(config); } catch(e) { config = {}; } }
-    roundsMap[r.id] = { id: r.id, name: r.name, createdAt: r.created_at, status: r.status || 'active', config, scores: {} };
+    roundsMap[r.id] = { id: r.id, name: r.name, createdAt: r.created_at, status: r.status || 'active', config, scores: {}, isActive: !!r.is_active };
   });
   (scoresArr || []).forEach(s => {
     if (!roundsMap[s.round_id]) return;
@@ -1070,8 +1067,7 @@ async function loadRoundsData(roundsArr, configArr, scoresArr) {
       roundsMap[rid].scores[s.rater_id][s.target_id] = { _total: s.score };
     }
   });
-  const activeId = (configArr && configArr.length > 0) ? configArr[0].value : (roundsArr[0] ? roundsArr[0].id : null);
-  roundsData = { rounds: Object.values(roundsMap), activeRoundId: activeId };
+  roundsData = { rounds: Object.values(roundsMap) };
 }
 
 async function loadRoundWeights(roundId) {
@@ -1267,8 +1263,24 @@ function getUserScopeMembers() {
 }
 
 function getActiveRound() {
-  if (!roundsData) return null;
-  return roundsData.rounds.find(r => r.id === roundsData.activeRoundId) || roundsData.rounds[0] || null;
+  if (!roundsData || !roundsData.rounds || roundsData.rounds.length === 0) return null;
+  // 获取当前用户所属部门
+  const userDepts = getUserScopeDepts ? getUserScopeDepts() : [];
+  const userDeptIds = userDepts.map(d => String(d.id));
+  // 找 isActive=true 且部门有交集的轮次
+  const activeInScope = roundsData.rounds.find(r => {
+    if (!r.isActive) return false;
+    const cfg = r.config || {};
+    if (!cfg.scope_dept_ids || cfg.scope_dept_ids.length === 0) return true; // 全公司轮次任何人都能看
+    return cfg.scope_dept_ids.some(id => userDeptIds.includes(String(id)));
+  });
+  if (activeInScope) return activeInScope;
+  // fallback：找第一个在用户范围内的轮次
+  return roundsData.rounds.find(r => {
+    const cfg = r.config || {};
+    if (!cfg.scope_dept_ids || cfg.scope_dept_ids.length === 0) return true;
+    return cfg.scope_dept_ids.some(id => userDeptIds.includes(String(id)));
+  }) || roundsData.rounds[0] || null;
 }
 function getRoundById(id) {
   return roundsData ? roundsData.rounds.find(r => r.id === id) : null;
@@ -1584,13 +1596,14 @@ function renderDashboard() {
     dash.innerHTML = '<div class="empty-state"><div class="icon">📊</div><p>暂无考评轮次</p></div>';
     return;
   }
-  const currentViewId = viewingRoundId || roundsData.activeRoundId;
+  const currentViewId = viewingRoundId || (getActiveRound() ? getActiveRound().id : null);
   const round = getRoundById(currentViewId) || roundsData.rounds[roundsData.rounds.length - 1];
   if (!round) return;
   // Load weights for this round
   loadRoundWeights(round.id);
+  const activeRoundId = getActiveRound() ? getActiveRound().id : null;
   const selectorOptions = roundsData.rounds.map(r =>
-    '<option value="' + r.id + '"' + (r.id === round.id ? ' selected' : '') + '>' + r.name + (r.id === roundsData.activeRoundId ? ' [进行中]' : '') + '</option>'
+    '<option value="' + r.id + '"' + (r.id === round.id ? ' selected' : '') + '>' + r.name + (r.id === activeRoundId ? ' [进行中]' : '') + '</option>'
   ).join('');
   const selectorHTML = '<div class="round-selector"><label>📋 查看：</label><select onchange="switchViewRound(this.value)">' + selectorOptions + '</select><button onclick="manualRefresh()" style="padding:8px 14px;background:rgba(255,255,255,0.1);color:#fff;border:1px solid rgba(255,255,255,0.2);border-radius:8px;cursor:pointer;font-size:13px">🔄 刷新</button></div>';
   const scores = calcScoresForRound(round);
@@ -2029,7 +2042,7 @@ function renderRoundsSection() {
   }
   html += '<div class="rounds-list">';
   rounds.slice().reverse().forEach(r => {
-    const isActive = activeRound && r.id === activeRound.id;
+    const isActive = !!r.isActive;
     const canMgr = canManageRound(r);
     const cfg = r.config || {};
     const statusLabel = r.status === 'active'
@@ -2433,13 +2446,22 @@ async function switchToRound(roundId) {
   if (!client) return;
   showLoading(true);
   try {
-    // 先查询是否已有记录，有则更新，无则插入
-    var { data: existing } = await client.from('app_config').select('key').eq('key', 'active_round_id').maybeSingle();
-    if (existing) {
-      await client.from('app_config').update({ value: String(roundId) }).eq('key', 'active_round_id');
-    } else {
-      await client.from('app_config').insert({ key: 'active_round_id', value: String(roundId) });
-    }
+    // 新逻辑：设置 rounds.is_active = true/false（不再用 app_config）
+    // 找出和该轮次部门有交集的所有其他轮次，一起更新
+    var cfg = r ? (r.config || {}) : {};
+    var scopeIds = cfg.scope_dept_ids || [];
+    var allInScope = rounds.filter(function(other) {
+      if (String(other.id) === String(roundId)) return true;
+      var oc = other.config || {};
+      var ocIds = oc.scope_dept_ids || [];
+      if (ocIds.length === 0) return true; // 全公司轮次和所有部门有交集
+      return scopeIds.some(function(sid) { return ocIds.map(function(oid){return String(oid);}).includes(String(sid)); });
+    });
+    var keepActiveIds = allInScope.map(function(x) { return String(x.id); });
+    // 先把所有交集轮次设为 false
+    await client.from('rounds').update({ is_active: false }).in('id', keepActiveIds);
+    // 再把目标轮次设为 true
+    await client.from('rounds').update({ is_active: true }).eq('id', roundId);
     await loadRoundsData();
     renderRoundsSection();
     showToast('已切换为当前轮次');

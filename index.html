@@ -337,6 +337,23 @@
     .btn-confirm.done { background: rgba(16,185,129,0.15); border-color: rgba(16,185,129,0.4); color: #34d399; cursor: default; }
     .btn-confirm:disabled { cursor: default; }
     .submit-all-wrap { margin-top: 24px; }
+    .score-round-selector {
+      display: flex; align-items: center; gap: 10px;
+      margin: 8px 0 0 0; flex-wrap: wrap;
+    }
+    .score-round-selector label { color: rgba(255,255,255,0.7); font-size: 13px; }
+    .score-round-selector select {
+      background: rgba(255,255,255,0.1);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 13px;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .score-round-selector select:focus { outline: none; border-color: var(--primary); }
+
     .tip { color: rgba(255,255,255,0.5); font-size: 13px; margin-bottom: 12px; text-align: center; }
     .btn-submit-all {
       width: 100%;
@@ -900,6 +917,7 @@ let departments = [];
 let deptMembers = [];
 let roundsData = null;
 let viewingRoundId = null;
+let scoringRoundId = null; // 当前员工正在评分的轮次ID
 let currentRoundWeights = {};
 let currentScores = {};
 let confirmedSet = new Set();
@@ -1338,10 +1356,41 @@ function isUserEvaluator(round) {
   return true;
 }
 
+// ===== SCORE ROUND HELPERS =====
+// 获取员工当前选中的轮次（优先用已选，其次用isActive，最后用第一个有评分资格的）
+function getScoringRound() {
+  const rounds = (roundsData && roundsData.rounds) || [];
+  // 过滤出员工有评分资格的轮次
+  const eligible = rounds.filter(function(r) {
+    try {
+      return isUserEvaluator(r);
+    } catch(e) {
+      return false;
+    }
+  });
+  if (scoringRoundId) {
+    var found = eligible.find(function(r) { return String(r.id) === String(scoringRoundId); });
+    if (found) return found;
+  }
+  // fallback：优先选 isActive，否则选第一个
+  var active = eligible.find(function(r) { return !!r.isActive; });
+  if (active) return active;
+  return eligible[0] || null;
+}
+
+// 切换评分轮次
+function switchScoringRound(roundId) {
+  scoringRoundId = roundId;
+  // 清空当前页面的评分状态
+  currentScores = {};
+  confirmedSet = new Set();
+  renderScorePage();
+}
+
 // ===== SCORE PAGE =====
 function renderScorePage() {
   if (!currentUser) return;
-  const activeRound = getActiveRound();
+  const activeRound = getScoringRound();
   if (!activeRound) {
     document.getElementById('score-grid').innerHTML = '<div class="empty-state"><div class="icon">📋</div><p>暂无激活的考评轮次</p><p style="margin-top:8px;font-size:12px;">请联系管理员创建考评</p></div>';
     document.getElementById('submit-all-wrap').style.display = 'none';
@@ -1378,6 +1427,32 @@ function renderScorePage() {
   });
   document.getElementById('score-page-title').textContent = activeRound.name;
   document.getElementById('score-page-sub').textContent = '为 ' + targets.length + ' 名同事评分';
+  // 构建轮次选择器（只有多个轮次时才显示）
+  const allRounds = (roundsData && roundsData.rounds) || [];
+  const eligibleRounds = allRounds.filter(function(r) {
+    try { return isUserEvaluator(r); } catch(e) { return false; }
+  });
+  if (eligibleRounds.length > 1) {
+    var selectorHtml = '<div class="score-round-selector">' +
+      '<label>📋 评分轮次：</label>' +
+      '<select onchange="switchScoringRound(this.value)">';
+    eligibleRounds.forEach(function(r) {
+      var isActive = String(r.id) === String(activeRound.id);
+      var statusTag = r.isActive ? ' [进行中]' : '';
+      selectorHtml += '<option value="' + r.id + '"' + (isActive ? ' selected' : '') + '>' + r.name + statusTag + '</option>';
+    });
+    selectorHtml += '</select></div>';
+    document.getElementById('score-page-title').innerHTML = activeRound.name + ' <span class="badge badge-blue">进行中</span>';
+    // 插入到subtitle后面
+    var subEl = document.getElementById('score-page-sub');
+    var existingSelector = document.getElementById('score-round-selector');
+    if (existingSelector) existingSelector.remove();
+    var sel = document.createElement('div');
+    sel.id = 'score-round-selector';
+    sel.className = 'score-round-selector';
+    sel.innerHTML = selectorHtml;
+    subEl.parentNode.insertBefore(sel, subEl.nextSibling);
+  }
   renderScoreGrid(targets, categories, activeRound);
   updateProgress(targets.length, categories);
 }
@@ -1442,7 +1517,8 @@ function onSlider(targetId, categoryId, val) {
   val = parseInt(val);
   if (!currentScores[targetId]) currentScores[targetId] = {};
   currentScores[targetId][categoryId] = val;
-  const categories = getCategories(getActiveRound());
+  const scoringRound = getScoringRound();
+  const categories = getCategories(scoringRound);
   const total = calcRowTotal(targetId, categories);
   const el = document.getElementById('total-num-' + targetId);
   if (el) el.innerHTML = total + '<span class="unit">分</span>';
@@ -1467,8 +1543,9 @@ function confirmScore(id) {
   const top = card.querySelector('.card-top');
   if (!top.querySelector('.scored-badge')) top.insertAdjacentHTML('beforeend', '<span class="scored-badge">✓ 已确认</span>');
   document.querySelectorAll('#card-' + id + ' .score-slider').forEach(s => s.disabled = true);
-  const targets = getTargetsForRound(getActiveRound());
-  updateProgress(targets.length, getCategories(getActiveRound()));
+  const scoringRound = getScoringRound();
+  const targets = getTargetsForRound(scoringRound);
+  updateProgress(targets.length, getCategories(scoringRound));
 }
 
 function updateProgress(targetCount, categories) {
@@ -1486,8 +1563,8 @@ function updateProgress(targetCount, categories) {
 // ===== SUBMIT ALL =====
 async function submitAll() {
   if (!currentUser) return;
-  const round = getActiveRound();
-  if (!round) { showToast('暂无激活的考评轮次'); return; }
+  const round = getScoringRound();
+  if (!round) { showToast('暂无可评分的轮次'); return; }
   if (confirmedSet.size === 0) { showToast('请先确认所有评分'); return; }
   const categories = getCategories(round);
   const targets = getTargetsForRound(round);

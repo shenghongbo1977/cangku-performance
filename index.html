@@ -2016,6 +2016,21 @@ function renderDeptTreeNode(depts, level) {
   }).join('');
 }
 
+function filterDeptHead() {
+  const kw = (document.getElementById('d-head-search') || {}).value.trim().toLowerCase();
+  const sel = document.getElementById('d-head');
+  if (!sel) return;
+  const opts = sel.options;
+  for (let i = 0; i < opts.length; i++) {
+    const t = opts[i].text.toLowerCase();
+    opts[i].style.display = (!kw || t.includes(kw)) ? '' : 'none';
+  }
+  // 如果当前选中项被隐藏了，自动选回空选项
+  if (sel.selectedIndex >= 0 && sel.options[sel.selectedIndex].style.display === 'none') {
+    sel.value = '';
+  }
+}
+
 function showAddDeptModal(parentId) {
   const parent = parentId ? departments.find(d => d.id === parentId) : null;
   const parentOptions = [{id:null, name:'（顶级部门）'}].concat(departments.map(d => ({id:d.id, name:d.name}))).map(d => '<option value="' + (d.id || '') + '"' + (parentId && d.id === parentId ? ' selected' : '') + '>' + d.name + '</option>').join('');
@@ -2027,7 +2042,9 @@ function showAddDeptModal(parentId) {
   document.getElementById('modal-body').innerHTML = '<div style="text-align:left">' +
     '<div class="form-group"><label class="form-label">部门名称 *</label><input class="form-input" id="d-name" placeholder="如：销售部" maxlength="100" /></div>' +
     '<div class="form-group"><label class="form-label">上级部门</label><select class="form-select" id="d-parent">' + parentOptions + '</select></div>' +
-    '<div class="form-group"><label class="form-label">部门负责人</label><select class="form-select" id="d-head"><option value="">-- 不设置 --</option>' + userOptions + '</select></div></div>';
+    '<div class="form-group"><label class="form-label">部门负责人</label>' +
+    '<input class="form-input" id="d-head-search" placeholder="搜索人员姓名或账号..." style="margin-bottom:6px" oninput="filterDeptHead()" />' +
+    '<select class="form-select" id="d-head" size="6" style="max-height:160px;overflow:auto"><option value="">-- 不设置 --</option>' + userOptions + '</select></div></div>';
   document.getElementById('modal-actions').innerHTML = '<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveDepartment()">保存</button>';
   document.getElementById('modal').classList.add('show');
 }
@@ -2042,7 +2059,9 @@ function showEditDeptModal(deptId) {
   document.getElementById('modal-body').innerHTML = '<div style="text-align:left">' +
     '<div class="form-group"><label class="form-label">部门名称 *</label><input class="form-input" id="d-name" value="' + (d.name || '') + '" maxlength="100" /></div>' +
     '<div class="form-group"><label class="form-label">上级部门</label><select class="form-select" id="d-parent">' + parentOptions + '</select></div>' +
-    '<div class="form-group"><label class="form-label">部门负责人</label><select class="form-select" id="d-head"><option value="">-- 不设置 --</option>' + userOptions + '</select></div></div>';
+    '<div class="form-group"><label class="form-label">部门负责人</label>' +
+    '<input class="form-input" id="d-head-search" placeholder="搜索人员姓名或账号..." style="margin-bottom:6px" oninput="filterDeptHead()" />' +
+    '<select class="form-select" id="d-head" size="6" style="max-height:160px;overflow:auto"><option value="">-- 不设置 --</option>' + userOptions + '</select></div></div>';
   document.getElementById('modal-actions').innerHTML = '<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveDepartment(' + deptId + ')">保存</button>';
   document.getElementById('modal').classList.add('show');
 }
